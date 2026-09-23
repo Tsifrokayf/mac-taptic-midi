@@ -32,6 +32,10 @@
 #define MT_FW "/System/Library/PrivateFrameworks/MultitouchSupport.framework/MultitouchSupport"
 #define MTDEVICE_ID_OFFSET 64
 
+/* См. midi_haptic.c: оффсет может отличаться на другом железе — автоподбор. */
+static long g_mt_offset = MTDEVICE_ID_OFFSET;
+static int g_offset_given = 0;
+
 #define ANA_RATE   22050   // частота анализа после afconvert
 #define FRAME      1024    // окно анализа (~46 мс)
 #define HOP        512     // шаг (~23 мс)
@@ -74,14 +78,13 @@ static int load_mt(void) {
     return 0;
 }
 
-static uint64_t mt_device_get_id(void *dev) {
+static uint64_t mt_device_get_id_at(void *dev, long offset) {
     uint64_t id = 0;
-    memcpy(&id, (uint8_t *)dev + MTDEVICE_ID_OFFSET, sizeof(id));
+    memcpy(&id, (uint8_t *)dev + offset, sizeof(id));
     return id;
 }
 
-static int64_t find_trackpad_device_id(int verbose) {
-    if (!pMTDeviceCreateList) { fprintf(stderr, "error: MTDeviceCreateList недоступен\n"); return -1; }
+static int64_t try_offset(long offset, int verbose) {
     CFMutableArrayRef devices = pMTDeviceCreateList();
     if (!devices) return -1;
     CFIndex count = CFArrayGetCount(devices);
@@ -89,22 +92,39 @@ static int64_t find_trackpad_device_id(int verbose) {
     int64_t found = -1;
     for (CFIndex i = 0; i < count; i++) {
         void *dev = (void *)CFArrayGetValueAtIndex(devices, i);
-        uint64_t devID = mt_device_get_id(dev);
+        uint64_t devID = mt_device_get_id_at(dev, offset);
+        if (devID == 0) continue;
         CFTypeRef act = pMTActuatorCreateFromDeviceID(devID);
-        if (act) {
-            IOReturn r = pMTActuatorOpen(act, 0);
-            if (verbose)
-                printf("  [%ld] device ID: %" PRIu64 " %s\n", (long)i, devID,
-                       r == kIOReturnSuccess ? "<- Taptic Engine!" : "(без актуатора)");
-            if (r == kIOReturnSuccess) {
-                pMTActuatorClose(act);
-                if (found == -1) found = (int64_t)devID;
-            }
-            CFRelease(act);
+        if (!act) continue;
+        IOReturn r = pMTActuatorOpen(act, 0);
+        if (verbose)
+            printf("  [%ld] offset %ld, device ID: %" PRIu64 " %s\n", (long)i, offset,
+                   devID, r == kIOReturnSuccess ? "<- Taptic Engine!" : "(без актуатора)");
+        if (r == kIOReturnSuccess) {
+            pMTActuatorClose(act);
+            if (found == -1) found = (int64_t)devID;
         }
+        CFRelease(act);
     }
     CFRelease(devices);
     return found;
+}
+
+static int64_t find_trackpad_device_id(int verbose) {
+    if (!pMTDeviceCreateList) { fprintf(stderr, "error: MTDeviceCreateList недоступен\n"); return -1; }
+    int64_t id = try_offset(g_mt_offset, verbose);
+    if (id != -1 || g_offset_given) return id;
+    if (verbose) printf("offset 64 не дал устройства — сканирую 0..248...\n");
+    for (long off = 0; off <= 248; off += 8) {
+        if (off == MTDEVICE_ID_OFFSET) continue;
+        id = try_offset(off, 0);
+        if (id != -1) {
+            g_mt_offset = off;
+            printf("Подобран offset %ld, device ID: %" PRId64 "\n", off, id);
+            return id;
+        }
+    }
+    return -1;
 }
 
 static IOReturn actuate_once(int64_t deviceID, int waveform) {
@@ -400,6 +420,7 @@ static void usage(const char *prog) {
         "  --max-hits N            ограничить число ударов (0 = без лимита)\n"
         "  --offset-ms MS        сдвиг вибрации относительно звука, мс -1000..1000 (по умолч. 0)\n"
         "  --offset-file PATH    живой сдвиг: перечитывать мс из файла перед каждым ударом\n"
+        "  --device-offset N     оффсет ID устройства (по умолч. 64, обычно не нужен)\n"
         "  --immediate             без паузы «старт через 1 сек» (для запуска из GUI)\n"
         "  -n, --dry-run           только показать биты, без вибрации\n"
         "  --info                  только анализ и статистика, не играть\n"
@@ -434,6 +455,7 @@ int main(int argc, char *argv[]) {
         {"offset-ms", required_argument, 0, 1004},
         {"offset-file", required_argument, 0, 1005},
         {"immediate", no_argument, 0, 1006},
+        {"device-offset", required_argument, 0, 1007},
         {"dry-run", no_argument, 0, 'n'},
         {"info", no_argument, 0, 1003},
         {"verbose", no_argument, 0, 'v'},
@@ -471,6 +493,13 @@ int main(int argc, char *argv[]) {
         case 1006:
             immediate = 1;
             break;
+        case 1007: {
+            long v = atol(optarg);
+            if (v < 0 || v > 512) { fprintf(stderr, "error: --device-offset 0..512\n"); return 1; }
+            g_mt_offset = v;
+            g_offset_given = 1;
+            break;
+        }
         case 'n': dry_run = 1; break;
         case 1003: info_only = 1; break;
         case 'v': verbose = 1; break;

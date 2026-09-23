@@ -38,6 +38,12 @@
 #define MT_FW "/System/Library/PrivateFrameworks/MultitouchSupport.framework/MultitouchSupport"
 #define MTDEVICE_ID_OFFSET 64
 
+/* Оффсет ID устройства в структуре MTDevice: 64 найден эмпирически на
+ * M3/Sequoia, но на другом железе (Intel) или macOS может отличаться —
+ * тогда срабатывает автоподбор ниже. Переопределяется --device-offset. */
+static long g_mt_offset = MTDEVICE_ID_OFFSET;
+static int g_offset_given = 0;
+
 /* ---------- приватный фреймворк: динамическая загрузка (ARM-safe) ---------- */
 
 static void *mt_handle = NULL;
@@ -75,10 +81,42 @@ static int load_mt(void) {
     return 0;
 }
 
-static uint64_t mt_device_get_id(void *dev) {
+static uint64_t mt_device_get_id_at(void *dev, long offset) {
     uint64_t id = 0;
-    memcpy(&id, (uint8_t *)dev + MTDEVICE_ID_OFFSET, sizeof(id));
+    memcpy(&id, (uint8_t *)dev + offset, sizeof(id));
     return id;
+}
+
+/* ID первого устройства с рабочим актуатором при данном оффсете, -1 если нет. */
+static int64_t try_offset(long offset, int verbose) {
+    CFMutableArrayRef devices = pMTDeviceCreateList();
+    if (!devices) return -1;
+    CFIndex count = CFArrayGetCount(devices);
+    if (verbose) printf("Найдено multitouch-устройств: %ld\n", (long)count);
+    int64_t found = -1;
+    for (CFIndex i = 0; i < count; i++) {
+        void *dev = (void *)CFArrayGetValueAtIndex(devices, i);
+        uint64_t devID = mt_device_get_id_at(dev, offset);
+        if (devID == 0) continue;
+        CFTypeRef act = pMTActuatorCreateFromDeviceID(devID);
+        if (!act) {
+            if (verbose)
+                printf("  [%ld] offset %ld: актуатор не создался\n", (long)i, offset);
+            continue;
+        }
+        IOReturn r = pMTActuatorOpen(act, 0);
+        if (verbose)
+            printf("  [%ld] offset %ld, device ID: %" PRIu64 " (0x%" PRIx64 ") %s\n",
+                   (long)i, offset, devID, devID,
+                   r == kIOReturnSuccess ? "<- Taptic Engine!" : "(без актуатора)");
+        if (r == kIOReturnSuccess) {
+            pMTActuatorClose(act);
+            if (found == -1) found = (int64_t)devID;
+        }
+        CFRelease(act);
+    }
+    CFRelease(devices);
+    return found;
 }
 
 static int64_t find_trackpad_device_id(int verbose) {
@@ -86,35 +124,21 @@ static int64_t find_trackpad_device_id(int verbose) {
         fprintf(stderr, "error: MTDeviceCreateList недоступен\n");
         return -1;
     }
-    CFMutableArrayRef devices = pMTDeviceCreateList();
-    if (!devices) {
-        fprintf(stderr, "error: MTDeviceCreateList вернул NULL\n");
-        return -1;
-    }
-    CFIndex count = CFArrayGetCount(devices);
-    if (verbose) printf("Найдено multitouch-устройств: %ld\n", (long)count);
-    int64_t found = -1;
-    for (CFIndex i = 0; i < count; i++) {
-        void *dev = (void *)CFArrayGetValueAtIndex(devices, i);
-        uint64_t devID = mt_device_get_id(dev);
-        CFTypeRef act = pMTActuatorCreateFromDeviceID(devID);
-        if (act) {
-            IOReturn r = pMTActuatorOpen(act, 0);
-            if (verbose)
-                printf("  [%ld] device ID: %" PRIu64 " (0x%" PRIx64 ") %s\n",
-                       (long)i, devID, devID,
-                       r == kIOReturnSuccess ? "<- Taptic Engine!" : "(без актуатора)");
-            if (r == kIOReturnSuccess) {
-                pMTActuatorClose(act);
-                if (found == -1) found = (int64_t)devID;
-            }
-            CFRelease(act);
-        } else if (verbose) {
-            printf("  [%ld] device ID: %" PRIu64 " (актуатор не создался)\n", (long)i, devID);
+    int64_t id = try_offset(g_mt_offset, verbose);
+    if (id != -1 || g_offset_given) return id;
+    // Оффсет 64 не дал устройства — железо/macOS другие: сканируем 0..248.
+    // Неверные ID безопасно отсеиваются (актуатор не открывается).
+    if (verbose) printf("offset 64 не дал устройства — сканирую 0..248...\n");
+    for (long off = 0; off <= 248; off += 8) {
+        if (off == MTDEVICE_ID_OFFSET) continue;
+        id = try_offset(off, 0);
+        if (id != -1) {
+            g_mt_offset = off;
+            printf("Подобран offset %ld, device ID: %" PRId64 "\n", off, id);
+            return id;
         }
     }
-    CFRelease(devices);
-    return found;
+    return -1;
 }
 
 /* ---------- MIDI-парсер (SMF, без зависимостей) ---------- */
@@ -458,6 +482,8 @@ static void usage(const char *prog) {
         "  --offset-ms MS        сдвиг вибрации относительно звука, мс -1000..1000 (по умолч. 0)\n"
         "  --offset-file PATH    живой сдвиг: перечитывать мс из файла перед каждой нотой\n"
         "                          (ползунок синхрона в GUI пишет туда — подгонка наживую)\n"
+        "  --device-offset N     оффсет ID устройства в структуре (по умолч. 64,\n"
+        "                          обычно не нужен — есть автоподбор)\n"
         "  --immediate             без паузы «старт через 1 сек» (для запуска из GUI)\n"
         "  -n, --dry-run         только показать ноты и тайминги, без вибрации\n"
         "  -v, --verbose         подробно печатать каждую ноту\n"
@@ -525,6 +551,7 @@ int main(int argc, char *argv[]) {
         {"offset-ms", required_argument, 0, 1005},
         {"offset-file", required_argument, 0, 1006},
         {"immediate", no_argument, 0, 1007},
+        {"device-offset", required_argument, 0, 1008},
         {"dry-run", no_argument, 0, 'n'},
         {"verbose", no_argument, 0, 'v'},
         {"device", required_argument, 0, 'd'},
@@ -585,6 +612,13 @@ int main(int argc, char *argv[]) {
         case 1007:
             immediate = 1;
             break;
+        case 1008: {
+            long v = atol(optarg);
+            if (v < 0 || v > 512) { fprintf(stderr, "error: --device-offset 0..512\n"); return 1; }
+            g_mt_offset = v;
+            g_offset_given = 1;
+            break;
+        }
         case 'n': dry_run = 1; break;
         case 'v': verbose = 1; break;
         case 'd': deviceID = atoll(optarg); break;

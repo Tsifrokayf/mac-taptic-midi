@@ -37,6 +37,18 @@ into a temporary 22050 Hz mono wav, then onset detection (energy flux +
 adaptive 1-second median threshold) finds the beats, beat strength → waveform.
 Detector sensitivity: `-s 0.5..2.0` (higher = catches quiet beats).
 
+## Supported hardware
+
+Any Mac with a trackpad that has a Taptic Engine:
+- Any MacBook from 2015 on Apple Silicon (M1–M6) or Intel
+- Any desktop Mac (mini, Studio, iMac, Mac Pro) with a Magic Trackpad 2
+
+Two separate builds: `MidiHaptic-arm64.dmg` for Apple Silicon,
+`MidiHaptic-intel.dmg` for Intel Macs (the private-framework calls are
+verified per architecture — the Intel build is tested under Rosetta).
+The engine auto-detects the device struct layout: if your hardware differs,
+it scans for a working offset by itself (`--device-offset` overrides it).
+
 ## The app (double-click)
 
 ```bash
@@ -70,7 +82,8 @@ Xcode Command Line Tools only (`xcode-select --install`).
 
 ```bash
 cd mac-taptic-midi
-make
+make            # Apple Silicon
+make intel      # Intel Macs (x86_64, needs Xcode CLT)
 ```
 
 ## Usage
@@ -108,6 +121,7 @@ All options: `./midi_haptic --help`
 | `--offset-ms MS` | vibration shift vs sound, ms (−1000..1000) |
 | `--offset-file PATH` | live shift: re-read ms from a file before every note (the GUI writes the slider there) |
 | `--immediate` | no “starting in 1 sec” pause, READY marker for GUI-synced start |
+| `--device-offset N` | device ID struct offset (default 64, auto-probed if wrong) |
 | `-c all\|1,10` | which MIDI channels to play (1–16) |
 | `--min-vel N` | drop quiet notes |
 | `--max-notes N` | note limit (handy for testing) |
@@ -130,7 +144,8 @@ Full list: `./audio_haptic --help`
    a pattern (quiet = light taps, loud = strong hits).
 3. Private API is used — any macOS update may break it (fix by cycling
    waveforms via `--list`).
-4. Only MacBooks with a Force Touch trackpad (2015+). No trackpad — nothing to vibrate.
+4. Needs a trackpad with a Taptic Engine (see supported hardware above) —
+   and a finger resting on it during playback.
 
 ## Android analog
 
