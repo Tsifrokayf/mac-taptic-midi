@@ -1,6 +1,8 @@
 # mac-haptic-midi — MIDI и MP3 на вибромоторе макбука (Taptic Engine, ARM)
 
-**Read in English: [README.md](README.md)**
+[English](README.md) | Русский
+
+---
 
 Проигрыватель MIDI- и MP3-файлов через **Taptic Engine трекпада** макбука с Apple Silicon (M1/M2/M3/M4).
 Каждая MIDI-нота превращается в щелчок/тап вибромотора, MP3 стучит по битам.

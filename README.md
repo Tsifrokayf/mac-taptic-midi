@@ -1,6 +1,8 @@
 # mac-haptic-midi — MIDI & MP3 on a MacBook vibration motor (Taptic Engine, ARM)
 
-**Читать на русском: [README_RU.md](README_RU.md)**
+English | [Русский](README_RU.md)
+
+---
 
 Plays MIDI and MP3 files through the **Taptic Engine of the Force Touch trackpad**
 on Apple Silicon MacBooks (M1/M2/M3/M4). Every MIDI note becomes a click/tap
