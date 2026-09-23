@@ -1,9 +1,12 @@
 # macOS build outputs
 midi_haptic
 audio_haptic
+typeclick
 MidiHapticApp
 MidiHapticApp.app/
 MidiHapticApp.iconset/
+RhythmGame
+RhythmGame.app/
 *.dmg
 .DS_Store
 __pycache__/
