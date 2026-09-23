@@ -150,17 +150,22 @@ Full list: `./audio_haptic --help`
 
 ## More toys
 
-**typeclick** — typewriter clicks: every keypress fires the Taptic Engine
-(letters = light tap, space = medium, enter = strong click, backspace = weak,
-modifiers stay silent). Needs Input Monitoring permission: System Settings →
+**typeclick** — typewriter clicks: every keypress fires the Taptic Engine.
+Default: letters = light tap, space/tab = medium, enter = strong click,
+backspace = weak, esc = buzz (unmistakable), modifiers stay silent.
+Tune each group: `--space/--tab/--enter/--delete/--esc/--key 1..6`
+(feel them first with `--list`, check with `--probe-key 49`),
+or write `~/.typeclickrc` (`space=5` per line, reloaded live).
+Needs Input Monitoring permission: System Settings →
 Privacy → Input Monitoring → add `typeclick`.
 ```bash
 make typeclick
 ./typeclick -v   # Ctrl-C to quit, finger on the trackpad
 ```
 
-**RhythmGame.app** — rhythm game on the trackpad: notes fall from a MIDI file,
-tap the trackpad on the beat. Perfect/Good/Miss judging, combo, S/A/B/C ranks,
+**RhythmGame.app** — rhythm game on the trackpad: drop a MIDI onto the window
+(typically 8-th note melodies work best), notes fall, tap the trackpad on the beat.
+Perfect/Good/Miss judging, combo, S/A/B/C ranks,
 3 difficulties. Tap detection via MultitouchSupport, hits confirmed by haptics.
 ```bash
 make rhythm-app

@@ -116,6 +116,62 @@ final class TouchTap {
     }
 }
 
+// ---------- дроп-зона ----------
+
+final class GameDropView: NSView {
+    var onFiles: (([String]) -> Void)?
+    private let label = NSTextField(labelWithString: "Кидай MIDI сюда")
+    private var hovering = false
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        label.alignment = .center
+        label.font = .systemFont(ofSize: 14)
+        label.textColor = .secondaryLabelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        registerForDraggedTypes([.fileURL])
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 6, dy: 6),
+                                xRadius: 10, yRadius: 10)
+        (hovering ? NSColor.controlAccentColor : NSColor.separatorColor).setStroke()
+        path.lineWidth = hovering ? 2.5 : 1.5
+        let dash: [CGFloat] = [8, 6]
+        path.setLineDash(dash, count: dash.count, phase: 0)
+        path.stroke()
+        layer?.backgroundColor = (hovering
+            ? NSColor.controlAccentColor.withAlphaComponent(0.08)
+            : NSColor.controlBackgroundColor).cgColor
+        layer?.cornerRadius = 10
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        hovering = true; needsDisplay = true
+        return .copy
+    }
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        hovering = false; needsDisplay = true
+    }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        hovering = false; needsDisplay = true
+        let files = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] ?? []
+        let midis = files.map { $0.path }.filter {
+            ["mid", "midi"].contains(($0 as NSString).pathExtension.lowercased())
+        }
+        if let f = midis.first { onFiles?([f]) }
+        return !midis.isEmpty
+    }
+}
+
 // ---------- падающие ноты ----------
 
 final class NoteView: NSView {
@@ -148,7 +204,7 @@ final class NoteView: NSView {
 
         // ноты
         for (i, t) in g.chart.enumerated() {
-            if g.judged[i] { continue }
+            if i >= g.judged.count || g.judged[i] { continue }
             let dt = t - now
             if dt < -0.3 || dt > 4 { continue }
             let y = g.hitY + CGFloat(dt) * g.speed
@@ -230,17 +286,21 @@ final class RhythmGame: NSObject, NSApplicationDelegate {
         let m = urls.map { $0.path }.filter {
             ["mid", "midi"].contains(($0 as NSString).pathExtension.lowercased())
         }
-        if let f = m.first {
-            loadChart(f)
-            if !playing { startGame() }
-        }
+        if let f = m.first { playFile(f) }
+    }
+
+    func playFile(_ path: String) {
+        // Атомарно: сначала остановить текущую игру, иначе новый chart
+        // рассинхронизируется со старым judged/idx — и вылет по индексу.
+        stopGame()
+        if loadChart(path) { startGame() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationWillTerminate(_ notification: Notification) { stopGame() }
 
     func buildWindow() {
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 680),
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 700),
                           styleMask: [.titled, .closable, .miniaturizable],
                           backing: .buffered, defer: false)
         window.title = "Ритм-игра на трекпаде"
@@ -263,10 +323,18 @@ final class RhythmGame: NSObject, NSApplicationDelegate {
         view = NoteView()
         view.game = self
         view.translatesAutoresizingMaskIntoConstraints = false
-        view.heightAnchor.constraint(equalToConstant: 460).isActive = true
+        view.heightAnchor.constraint(equalToConstant: 416).isActive = true
         view.wantsLayer = true
         view.layer?.cornerRadius = 10
         root.addArrangedSubview(view)
+
+        let drop = GameDropView(frame: NSRect(x: 0, y: 0, width: 480, height: 56))
+        drop.translatesAutoresizingMaskIntoConstraints = false
+        drop.heightAnchor.constraint(equalToConstant: 56).isActive = true
+        drop.onFiles = { [weak self] files in
+            if let f = files.first { self?.playFile(f) }
+        }
+        root.addArrangedSubview(drop)
 
         fileLabel.font = .systemFont(ofSize: 12)
         fileLabel.textColor = .secondaryLabelColor
@@ -311,12 +379,16 @@ final class RhythmGame: NSObject, NSApplicationDelegate {
         let pipe = Pipe()
         p.standardOutput = pipe
         do {
-            try p.run(); p.waitUntilExit()
+            try p.run()
         } catch {
             log("Не запустился midi_haptic"); return false
         }
-        let s = String(data: pipe.fileHandleForReading.readDataToEndOfFile(),
-                       encoding: .utf8) ?? ""
+        // Сначала вычитать трубу до конца и только потом ждать:
+        // иначе на толстых MIDI (>64 КБ вывода) клинч — ребёнок ждёт чтения,
+        // родитель ждёт выхода. Так висло окно при дропе больших файлов.
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        let s = String(data: data, encoding: .utf8) ?? ""
         var times = [Double]()
         for line in s.components(separatedBy: "\n") {
             guard line.hasPrefix("["),
@@ -388,13 +460,14 @@ final class RhythmGame: NSObject, NSApplicationDelegate {
         if !playing { return }
         let now = mono()
         // пропущенные
-        while idx < chart.count && !judged[idx] && chart[idx] < now - missWin {
+        while idx < chart.count && idx < judged.count &&
+              !judged[idx] && chart[idx] < now - missWin {
             judged[idx] = true
             idx += 1
             miss += 1; combo = 0
             updateScore()
         }
-        while idx < chart.count && judged[idx] { idx += 1 }
+        while idx < chart.count && idx < judged.count && judged[idx] { idx += 1 }
         view.needsDisplay = true
         if now > (chart.last ?? 0.0) + 1.0 {
             finishGame()
@@ -406,7 +479,8 @@ final class RhythmGame: NSObject, NSApplicationDelegate {
         // ближайшая несуженая нота
         var best = -1
         var bestDt = Double.greatestFiniteMagnitude
-        for i in max(0, idx - 3) ..< min(chart.count, idx + 4) {
+        let n = min(chart.count, judged.count)
+        for i in max(0, idx - 3) ..< min(n, idx + 4) {
             if judged[i] { continue }
             let dt = abs(chart[i] - t)
             if dt < bestDt { bestDt = dt; best = i }
