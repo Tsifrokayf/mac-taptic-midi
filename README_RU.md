@@ -10,6 +10,7 @@
 
 ![Окно мака](screenshots/mac-app.png)
 ![Приложение Android](screenshots/android-app.png)
+![Ритм-игра](screenshots/rhythm-game.png)
 
 ## Как это работает
 
@@ -141,6 +142,26 @@ make intel      # Intel-маки (x86_64, нужен Xcode CLT)
 4. Нужен трекпад с Taptic Engine (см. раздел про железо выше) —
    и палец на нём во время игры.
 
+## Ещё игрушки
+
+**typeclick** — печатная машинка: каждое нажатие щёлкает Taptic Engine
+(буквы — лёгкий тап, пробел — средний, ввод — сильный клик, стереть — слабый,
+модификаторы молчат). Нужен доступ «Мониторинг ввода»: Системные настройки →
+Конфиденциальность → Мониторинг ввода → добавить `typeclick`.
+```bash
+make typeclick
+./typeclick -v   # выход: Ctrl-C, палец на трекпаде
+```
+
+**RhythmGame.app** — ритм-игра на трекпаде: ноты падают из MIDI-файла,
+тапай по трекпаду в ритм. Оценки Perfect/Good/Miss, комбо, ранги S/A/B/C,
+3 сложности. Тапы детектятся через MultitouchSupport, попадания
+подтверждаются вибрацией.
+```bash
+make rhythm-app
+open RhythmGame.app song.mid
+```
+
 ## Файлы
 
 - `midi_haptic.c` — движок MIDI (парсер + драйвер Taptic Engine)
@@ -152,6 +173,8 @@ make intel      # Intel-маки (x86_64, нужен Xcode CLT)
 - `MidiHapticGui.swift` — нативное окно (плейлист, звук, повтор, прогресс, метроном)
 - `HapticDriver.swift` — доступ к Taptic Engine из Swift (для метронома)
 - `main.swift` — точка входа GUI
+- `typeclick.c` — печатная машинка через глобальный перехват клавиш
+- `RhythmGame.swift` (+ `game-main.swift`, `RhythmGame-Info.plist`) — ритм-игра на трекпаде (`make rhythm-app`)
 - `Info.plist`, `gen_icon.py` — сборка `.app` бандла (`make app`)
 - `Makefile` — `make` (движок), `make MidiHapticApp` (окно), `make app` (бандл)
 - `gen_test_midi.py` — генератор тестовых MIDI без зависимостей

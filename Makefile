@@ -79,6 +79,26 @@ MidiHaptic-intel.dmg: app-intel
 	rm -rf /tmp/dmgroot-intel
 
 clean:
-	rm -rf midi_haptic audio_haptic MidiHapticApp $(APP) MidiHapticApp.iconset build-intel MidiHaptic-arm64.dmg MidiHaptic-intel.dmg MidiHaptic.dmg
+	rm -rf midi_haptic audio_haptic typeclick MidiHapticApp $(APP) MidiHapticApp.iconset build-intel MidiHaptic-arm64.dmg MidiHaptic-intel.dmg MidiHaptic.dmg RhythmGame RhythmGame.app
 
 .PHONY: all clean intel app-intel
+
+# --- Печатная машинка: щелчок на каждое нажатие (нужен «Мониторинг ввода») ---
+typeclick: typeclick.c
+	$(CC) $(CFLAGS) -arch arm64 -o typeclick typeclick.c $(LDFLAGS_ARM) -framework ApplicationServices
+
+# --- Ритм-игра на трекпаде ---
+RhythmGame: RhythmGame.swift HapticDriver.swift game-main.swift
+	swiftc -O -o RhythmGame RhythmGame.swift HapticDriver.swift game-main.swift $(SWIFT_FW)
+
+RHYTHM_APP = RhythmGame.app
+
+rhythm-app: RhythmGame midi_haptic
+	rm -rf $(RHYTHM_APP)
+	mkdir -p $(RHYTHM_APP)/Contents/MacOS $(RHYTHM_APP)/Contents/Resources
+	cp RhythmGame midi_haptic $(RHYTHM_APP)/Contents/MacOS/
+	cp RhythmGame-Info.plist $(RHYTHM_APP)/Contents/Info.plist
+	python3 gen_icon.py
+	iconutil -c icns MidiHapticApp.iconset -o $(RHYTHM_APP)/Contents/Resources/AppIcon.icns
+	rm -rf MidiHapticApp.iconset
+	@echo "Готово: $(RHYTHM_APP) — тапай по трекпаду в ритм"

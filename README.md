@@ -11,6 +11,7 @@ Tested on MacBook Air ARM64, macOS 26. Includes an **Android analog**.
 
 ![Mac app](screenshots/mac-app.png)
 ![Android app](screenshots/android-app.png)
+![Rhythm game](screenshots/rhythm-game.png)
 
 ## How it works
 
@@ -147,6 +148,25 @@ Full list: `./audio_haptic --help`
 4. Needs a trackpad with a Taptic Engine (see supported hardware above) —
    and a finger resting on it during playback.
 
+## More toys
+
+**typeclick** — typewriter clicks: every keypress fires the Taptic Engine
+(letters = light tap, space = medium, enter = strong click, backspace = weak,
+modifiers stay silent). Needs Input Monitoring permission: System Settings →
+Privacy → Input Monitoring → add `typeclick`.
+```bash
+make typeclick
+./typeclick -v   # Ctrl-C to quit, finger on the trackpad
+```
+
+**RhythmGame.app** — rhythm game on the trackpad: notes fall from a MIDI file,
+tap the trackpad on the beat. Perfect/Good/Miss judging, combo, S/A/B/C ranks,
+3 difficulties. Tap detection via MultitouchSupport, hits confirmed by haptics.
+```bash
+make rhythm-app
+open RhythmGame.app song.mid
+```
+
 ## Android analog
 
 Folder `android/` — the same idea on a phone (Kotlin/Compose): MIDI parser,
@@ -162,6 +182,8 @@ Details in `android/README.md` (in Russian).
 - `MidiHapticGui.swift` — native window (playlist, sound, repeat, progress, metronome)
 - `HapticDriver.swift` — Taptic Engine access from Swift (for the metronome)
 - `main.swift` — GUI entry point
+- `typeclick.c` — typewriter clicks via a global key tap
+- `RhythmGame.swift` (+ `game-main.swift`, `RhythmGame-Info.plist`) — trackpad rhythm game (`make rhythm-app`)
 - `Info.plist`, `gen_icon.py` — `.app` bundle build (`make app`)
 - `Makefile` — `make` (engines), `make MidiHapticApp` (window), `make app` (bundle)
 - `gen_test_midi.py` — dependency-free test MIDI generator
