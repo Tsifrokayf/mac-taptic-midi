@@ -1,4 +1,4 @@
-# mac-haptic-midi — MIDI & MP3 on a MacBook vibration motor (Taptic Engine, ARM)
+# mac-taptic-midi — MIDI & MP3 on a MacBook vibration motor (Taptic Engine, ARM)
 
 English | [Русский](README_RU.md)
 
@@ -69,7 +69,7 @@ Without the bundle it works too: `make MidiHapticApp && ./MidiHapticApp`
 Xcode Command Line Tools only (`xcode-select --install`).
 
 ```bash
-cd mac-haptic-midi
+cd mac-taptic-midi
 make
 ```
 

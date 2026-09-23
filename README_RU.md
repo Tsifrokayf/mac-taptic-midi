@@ -1,4 +1,4 @@
-# mac-haptic-midi — MIDI и MP3 на вибромоторе макбука (Taptic Engine, ARM)
+# mac-taptic-midi — MIDI и MP3 на вибромоторе макбука (Taptic Engine, ARM)
 
 [English](README.md) | Русский
 
@@ -67,7 +67,7 @@ open MidiHapticApp.app
 Нужны только Xcode Command Line Tools (`xcode-select --install`).
 
 ```bash
-cd mac-haptic-midi
+cd mac-taptic-midi
 make
 ```
 
