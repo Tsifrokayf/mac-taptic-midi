@@ -4,6 +4,7 @@ audio_haptic
 MidiHapticApp
 MidiHapticApp.app/
 MidiHapticApp.iconset/
+*.dmg
 .DS_Store
 __pycache__/
 
