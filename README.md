@@ -5,7 +5,7 @@ English | [Русский](README_RU.md)
 ---
 
 Plays MIDI and MP3 files through the **Taptic Engine of the Force Touch trackpad**
-on Apple Silicon MacBooks (M1/M2/M3/M4). Every MIDI note becomes a click/tap
+on Apple Silicon MacBooks (M1/M2/M3/M4/M5/M6). Every MIDI note becomes a click/tap
 of the vibration motor, MP3 thumps along with the beats.
 Tested on MacBook Air ARM64, macOS 26. Includes an **Android analog**.
 

@@ -4,7 +4,7 @@
 
 ---
 
-Проигрыватель MIDI- и MP3-файлов через **Taptic Engine трекпада** макбука с Apple Silicon (M1/M2/M3/M4).
+Проигрыватель MIDI- и MP3-файлов через **Taptic Engine трекпада** макбука с Apple Silicon (M1/M2/M3/M4/M5/M6).
 Каждая MIDI-нота превращается в щелчок/тап вибромотора, MP3 стучит по битам.
 Проверено на MacBook Air ARM64, macOS 26.
 
