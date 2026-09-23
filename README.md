@@ -1,142 +1,159 @@
-# midi_haptic — MIDI и MP3 на вибромоторе макбука (Taptic Engine, ARM)
+# mac-haptic-midi — MIDI & MP3 on a MacBook vibration motor (Taptic Engine, ARM)
 
-Проигрыватель MIDI- и MP3-файлов через **Taptic Engine трекпада** макбука с Apple Silicon (M1/M2/M3/M4).
-Каждая MIDI-нота превращается в щелчок/тап вибромотора, MP3 стучит по битам.
-Проверено на MacBook Air ARM64, macOS 26.
+**Читать на русском: [README_RU.md](README_RU.md)**
 
-## Как это работает
+Plays MIDI and MP3 files through the **Taptic Engine of the Force Touch trackpad**
+on Apple Silicon MacBooks (M1/M2/M3/M4). Every MIDI note becomes a click/tap
+of the vibration motor, MP3 thumps along with the beats.
+Tested on MacBook Air ARM64, macOS 26. Includes an **Android analog**.
 
-У макбука нет «вибромотора» как в телефоне — есть **Taptic Engine под Force Touch трекпадом**.
-Публичный API (`NSHapticFeedbackManager`) умеет только 3 скучных паттерна и требует палец на трекпаде.
-Поэтому программа идёт как `mactic`: грузит приватный `MultitouchSupport.framework`
-**через `dlopen`/`dlsym`** (это обязательно на ARM — прямой линк ломается из-за Pointer Authentication)
-и дёргает актуатор напрямую: `MTActuatorCreateFromDeviceID / Open / Actuate / Close`.
+![Mac app](screenshots/mac-app.png)
+![Android app](screenshots/android-app.png)
 
-MIDI парсится своим кодом без зависимостей: формат 0/1, несколько треков,
-`note_on` (velocity 0 = note off), карта темпа (`FF 51`), running status, VLQ.
+## How it works
 
-Маппинг нот в вибрацию (6 waveform'ов прошивки: 1 слабый клик, 2 сильный клик,
-3 buzz, 4 лёгкий тап, 5 средний тап, 6 сильный тап):
+A MacBook has no phone-style vibration motor — it has a **Taptic Engine under
+the Force Touch trackpad**. The public API (`NSHapticFeedbackManager`) only
+knows 3 boring patterns and needs a finger on the trackpad. So the program
+goes the `mactic` way: it loads the private `MultitouchSupport.framework`
+**via `dlopen`/`dlsym`** (mandatory on ARM — direct linking breaks on Pointer
+Authentication) and drives the actuator directly:
+`MTActuatorCreateFromDeviceID / Open / Actuate / Close`.
 
-- `--map velocity` (по умолчанию): громкость → сила удара (тихо = лёгкий тап, громко = сильный тап)
-- `--map pitch`: высота → характер удара (бас = тяжёлый клик, верха = лёгкие тапы)
-- `--map drums`: 10-й канал разбирается отдельно (kick → сильный клик, snare → сильный тап, hats → лёгкий тап)
+MIDI is parsed by dependency-free code: format 0/1, multiple tracks,
+`note_on` (velocity 0 = note off), tempo map (`FF 51`), running status, VLQ.
 
-MP3 (`audio_haptic`) идёт другим путём: файл через `afconvert` превращается
-во временный wav 22050 Гц моно, дальше onset-детекция (energy flux + адаптивный
-порог по медиане за 1 с) находит биты, сила бита → waveform. Чуйка детектора:
-`-s 0.5..2.0` (больше = ловит тихие биты).
+Note → vibration mapping (6 firmware waveforms: 1 weak click, 2 strong click,
+3 buzz, 4 light tap, 5 medium tap, 6 strong tap):
 
-## Приложение (двойной клик)
+- `--map velocity` (default): loudness → hit strength (quiet = light tap, loud = strong hit)
+- `--map pitch`: pitch → hit character (bass = heavy click, highs = light taps)
+- `--map drums`: channel 10 handled separately (kick → strong click, snare → strong tap, hats → light tap)
+
+MP3 (`audio_haptic`) takes a different path: the file goes through `afconvert`
+into a temporary 22050 Hz mono wav, then onset detection (energy flux +
+adaptive 1-second median threshold) finds the beats, beat strength → waveform.
+Detector sensitivity: `-s 0.5..2.0` (higher = catches quiet beats).
+
+## The app (double-click)
 
 ```bash
 make app
 open MidiHapticApp.app
 ```
 
-Полноценный `.app` бандл с иконкой: открывается двойным кликом,
-`.mid` и `.mp3` открываются через «Открыть с помощью» или перетаскиванием на иконку.
+A full `.app` bundle with an icon: opens with a double-click,
+`.mid` and `.mp3` open via “Open With” or by dragging onto the icon.
 
-В окне:
-- **плейлист**: тащи сразу несколько файлов — MIDI (🎹) и аудио (🔊): mp3/wav/m4a/aiff/flac
-- **режимы**: выбранное / весь список / 🔂 повтор одного / 🔁 повтор всего
-- **🔊 звук**: MIDI играет через синтезатор, MP3 — оригинал. Старт строго
-  вместе с первой вибрацией: движок даёт маркер READY, звук стартует по нему
-  (никакой секундной паузы при игре из окна)
-- **громкость** 10–300%, **синхрон** ±1000 мс (сдвиг вибрации относительно звука,
-  кнопки ±10 мс для точной доводки). Сдвиг живой: движки перечитывают его
-  перед каждой нотой/ударом — крутить можно прямо во время игры
-- **метроном**: BPM/доли/клик-«ток» (синтез, не системные писки) + визуальные
-  точки долей (◉ — акцент). Сдвиг применяется вживую: слушай клик, чувствуй
-  вибрацию, крути «Синхрон», пока не совпадут. Тот же сдвиг уходит флагом
-  `--offset-ms` в движки при игре файлов
-- **прогресс-бар** с временем трека, маппинг, каналы, живой лог внизу
+In the window:
+- **Playlist**: drop several files at once — MIDI (🎹) and audio (🔊): mp3/wav/m4a/aiff/flac
+- **Modes**: selected / whole list / 🔂 repeat one / 🔁 repeat all
+- **🔊 Sound**: MIDI plays through a synth, MP3 plays the original, in sync with vibration.
+  Starts strictly together with the first vibration: the engine emits a READY
+  marker and the sound starts on it (no one-second pause when played from the window)
+- **Volume** 10–300%, **sync** ±1000 ms (vibration shift vs sound, ±10 ms buttons
+  for fine tuning). The shift is live: engines re-read it before every
+  note/hit — tweak it mid-track
+- **Metronome**: BPM/beats/synthesized “tok” click + visual beat dots (◉ = accent).
+  The shift applies live: hear the click, feel the buzz, turn “Sync” until they
+  merge. The same shift is passed as `--offset-ms` to the engines for files
+- **Progress bar** with track time, mapping, channels, live engine log below
 
-Без бандла тоже работает: `make MidiHapticApp && ./MidiHapticApp`
-(ищет `midi_haptic` рядом с собой — держи их в одной папке).
+Without the bundle it works too: `make MidiHapticApp && ./MidiHapticApp`
+(it looks for `midi_haptic` next to itself — keep them in one folder).
 
-## Использование из терминала
+## Terminal usage
 
-Нужны только Xcode Command Line Tools (`xcode-select --install`).
+Xcode Command Line Tools only (`xcode-select --install`).
 
 ```bash
-cd hapticEngineMidi
+cd mac-haptic-midi
 make
 ```
 
-## Использование
+## Usage
 
 ```bash
-# 1. Проверка: есть ли Taptic Engine
+# 1. Check: is there a Taptic Engine
 ./midi_haptic --scan
 
-# 2. Проверка ощущений (положи палец на трекпад!)
+# 2. Feel check (finger on the trackpad!)
 ./midi_haptic --list
 
-# 3. Посмотреть, во что превратится MIDI, без вибрации
+# 3. See what the MIDI becomes, no vibration
 ./midi_haptic song.mid --dry-run -v
 
-# 4. Играть! Палец на трекпаде!
+# 4. Play! Finger on the trackpad!
 ./midi_haptic song.mid
 
-# 5. Барабаны отдельно, быстрее, только 1-й и 10-й каналы
+# 5. Drums only, faster, channels 1 and 10
 ./midi_haptic song.mid -m drums -t 1.5 -c 1,10 -v
 
-# 6. MP3 по битам (палец на трекпаде!)
+# 6. MP3 on beats (finger on the trackpad!)
 ./audio_haptic song.mp3
 ./audio_haptic song.mp3 -s 1.5 -g 1.3 --dry-run
 ```
 
-Все опции: `./midi_haptic --help`
+All options: `./midi_haptic --help`
 
-| Опция | Что делает |
+| Option | What it does |
 |---|---|
-| `-m velocity\|pitch\|drums` | режим маппинга |
-| `-t 0.25..4.0` | множитель темпа (2.0 = вдвое быстрее) |
-| `-g 0.10..2.00` | громкость: множитель velocity (тише → лёгкие тапы, громче → сильные удары) |
-| `--loop N` | повторить воспроизведение N раз (1..99) |
-| `--info` | только показать разбор и длительность, не играть |
-| `--offset-ms MS` | сдвиг вибрации относительно звука, мс (−1000..1000) |
-| `--offset-file PATH` | живой сдвиг: перечитывать мс из файла перед каждой нотой (GUI пишет туда со слайдера) |
-| `--immediate` | без паузы «старт через 1 сек», маркер READY для синхронного старта из GUI |
-| `-c all\|1,10` | какие MIDI-каналы играть (1–16) |
-| `--min-vel N` | отбросить тихие ноты |
-| `--max-notes N` | лимит нот (удобно для теста) |
-| `-n, --dry-run` | только печать, без вибрации |
-| `-v` | печатать каждую ноту |
-| `-d ID` | ID устройства вручную (обычно находится само) |
+| `-m velocity\|pitch\|drums` | mapping mode |
+| `-t 0.25..4.0` | tempo multiplier (2.0 = twice as fast) |
+| `-g 0.10..2.00` | volume: velocity multiplier (quieter → light taps, louder → strong hits) |
+| `--loop N` | repeat playback N times (1..99) |
+| `--info` | only parse and show duration, don't play |
+| `--offset-ms MS` | vibration shift vs sound, ms (−1000..1000) |
+| `--offset-file PATH` | live shift: re-read ms from a file before every note (the GUI writes the slider there) |
+| `--immediate` | no “starting in 1 sec” pause, READY marker for GUI-synced start |
+| `-c all\|1,10` | which MIDI channels to play (1–16) |
+| `--min-vel N` | drop quiet notes |
+| `--max-notes N` | note limit (handy for testing) |
+| `-n, --dry-run` | only print, no vibration |
+| `-v` | print every note |
+| `-d ID` | multitouch device ID manually (usually auto-detected) |
 
-`audio_haptic`: `-g` (громкость), `-s 0.5..2.0` (чуйка), `--min-gap MS`,
-`--max-hits N`, `--offset-ms MS`, `-n`, `--info`, `-v`. Полный список: `./audio_haptic --help`
+`audio_haptic`: `-g` (volume), `-s 0.5..2.0` (sensitivity), `--min-gap MS`,
+`--max-hits N`, `--offset-ms MS`, `--offset-file PATH`, `-n`, `--info`, `-v`.
+Full list: `./audio_haptic --help`
 
-## Важно
+## Important
 
-1. **Палец должен лежать на трекпаде** — иначе Taptic Engine почти не чувствуется. Так устроен Force Touch.
-2. Актуатор умеет только короткие «тук», а не длинные ноты и не громкость — мелодия превращается в ритм-щелчки. Лучше всего заходят барабаны и бас.
-   Честная оговорка: в железе зашиты фиксированные паттерны, ручки «амплитуда»
-   у приватного API нет — поэтому громкость программная: масштабирует velocity
-   перед выбором паттерна (тихо = лёгкие тапы, громко = сильные удары).
-3. Используется приватный API — после обновления macOS может сломаться (лечится перебором waveform'ов через `--list`).
-4. Только макбуки с Force Touch трекпадом (2015+). На внешних мониторах/клавиатурах без трекпада — негде вибрировать.
+1. **A finger must rest on the trackpad** — otherwise the Taptic Engine is barely
+   felt. That's how Force Touch works.
+2. The actuator only does short “toks”, not long notes or volume — a melody
+   becomes rhythm clicks. Drums and bass work best.
+   Honest caveat: the hardware has fixed patterns, the private API has no
+   “amplitude” knob — so volume is software: it scales velocity before picking
+   a pattern (quiet = light taps, loud = strong hits).
+3. Private API is used — any macOS update may break it (fix by cycling
+   waveforms via `--list`).
+4. Only MacBooks with a Force Touch trackpad (2015+). No trackpad — nothing to vibrate.
 
-## Файлы
+## Android analog
 
-- `midi_haptic.c` — движок MIDI (парсер + драйвер Taptic Engine)
-- `audio_haptic.c` — движок аудио (afconvert + детектор битов + Taptic Engine)
-- `gen_test_audio.py` — синтезатор тестового бита; `test_beat.wav` / `test_beat.mp3`
-- `android/` — **аналог для Android** (Kotlin/Compose): MIDI-парсер, детектор битов
-  через MediaCodec, вибрация с настоящей амплитудой. Готовый `HapticMidi-debug.apk`,
-  проверен на эмуляторе. Подробности в `android/README.md`
-- `MidiHapticGui.swift` — нативное окно (плейлист, звук, повтор, прогресс, метроном)
-- `HapticDriver.swift` — доступ к Taptic Engine из Swift (для метронома)
-- `main.swift` — точка входа GUI
-- `Info.plist`, `gen_icon.py` — сборка `.app` бандла (`make app`)
-- `Makefile` — `make` (движок), `make MidiHapticApp` (окно), `make app` (бандл)
-- `gen_test_midi.py` — генератор тестовых MIDI без зависимостей
-- `test_scale.mid` — гамма с нарастающей громкостью
-- `test_chords_drums.mid` — аккорды + смена темпа + барабаны
+Folder `android/` — the same idea on a phone (Kotlin/Compose): MIDI parser,
+beat detector via MediaCodec, vibration with **real amplitude** (1–255),
+metronome with sync calibration, playlist, sound. Ready APK:
+`android/HapticMidi-debug.apk`, tested on an emulator.
+Details in `android/README.md` (in Russian).
 
-## Откуда взят подход
+## Files
 
-- `mactic` (MatMercer) — идея грузить MultitouchSupport через dlopen на ARM, ID waveform'ов, оффсет device ID 64
-- Apple docs: `NSHapticFeedbackManager` (публичный, но слабый API — поэтому не используется)
+- `midi_haptic.c` — MIDI engine (parser + Taptic Engine driver)
+- `audio_haptic.c` — audio engine (afconvert + beat detector + Taptic Engine)
+- `MidiHapticGui.swift` — native window (playlist, sound, repeat, progress, metronome)
+- `HapticDriver.swift` — Taptic Engine access from Swift (for the metronome)
+- `main.swift` — GUI entry point
+- `Info.plist`, `gen_icon.py` — `.app` bundle build (`make app`)
+- `Makefile` — `make` (engines), `make MidiHapticApp` (window), `make app` (bundle)
+- `gen_test_midi.py` — dependency-free test MIDI generator
+- `test_scale.mid` — scale with rising loudness
+- `test_chords_drums.mid` — chords + tempo change + drums
+- `gen_test_audio.py` — beat synthesizer; `test_beat.wav` / `test_beat.mp3`
+- `screenshots/` — app screenshots
+
+## Approach credits
+
+- `mactic` (MatMercer) — loading MultitouchSupport via dlopen on ARM, waveform IDs, device ID offset 64
+- Apple docs: `NSHapticFeedbackManager` (public but weak API — hence not used)
