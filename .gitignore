@@ -1,0 +1,13 @@
+# macOS build outputs
+midi_haptic
+audio_haptic
+MidiHapticApp
+MidiHapticApp.app/
+MidiHapticApp.iconset/
+.DS_Store
+__pycache__/
+
+# android build outputs
+android/.gradle/
+android/app/build/
+android/local.properties
