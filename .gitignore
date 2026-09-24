@@ -7,6 +7,8 @@ MidiHapticApp.app/
 MidiHapticApp.iconset/
 RhythmGame
 RhythmGame.app/
+TypeBar
+TypeBar.app/
 *.dmg
 .DS_Store
 __pycache__/
