@@ -417,33 +417,13 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async { [weak self] in self?.demoStatusItem.title = s }
     }
 
-    /// Синхронная очередь ударов для демо (вызывать с фона).
-    func burstSync(group g: String) {
-        let w = waves[g] ?? 4
-        let r = reps[g] ?? 1
-        let gap = UInt32(repGapMs * 1000)
-        for i in 0 ..< r {
-            if stopDemoFlag { break }
-            if i > 0 { usleep(gap) }
-            _ = driver?.fire(Int32(w))
-        }
-    }
-
     func runDemo() {
-        let order = ["key", "space", "tab", "enter", "delete", "esc"]
-        let titles = ["key": "Буквы", "space": "Пробел", "tab": "Tab",
-                      "enter": "Ввод", "delete": "Стереть", "esc": "Esc"]
-        for _ in 0 ..< 4 {
+        // Демо эффектов: волны 1–6 по очереди одиночными ударами,
+        // чтобы сравнить сами эффекты (не группы клавиш).
+        for w in 1 ... 6 {
             if stopDemoFlag { break }
-            usleep(250000)
-        }
-        for (idx, g) in order.enumerated() {
-            if stopDemoFlag { break }
-            let w = waves[g] ?? 4
-            let r = reps[g] ?? 1
-            let pat = r == 1 ? "\(w)" : "\(w)x\(r)"
-            demoSay("▶ [\(idx + 1)/6] \(titles[g] ?? g): \(pat) · \(waveNames[w])")
-            burstSync(group: g)
+            demoSay("▶ [\(w)/6] \(waveNames[w])")
+            if !stopDemoFlag { _ = driver?.fire(Int32(w)) }
             for _ in 0 ..< 12 {
                 if stopDemoFlag { break }
                 usleep(100000)
