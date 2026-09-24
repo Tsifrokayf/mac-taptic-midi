@@ -437,12 +437,12 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
             if stopDemoFlag { break }
             usleep(250000)
         }
-        for g in order {
+        for (idx, g) in order.enumerated() {
             if stopDemoFlag { break }
             let w = waves[g] ?? 4
             let r = reps[g] ?? 1
             let pat = r == 1 ? "\(w)" : "\(w)x\(r)"
-            demoSay("▶ \(titles[g] ?? g): \(pat) · \(waveNames[w])")
+            demoSay("▶ [\(idx + 1)/6] \(titles[g] ?? g): \(pat) · \(waveNames[w])")
             burstSync(group: g)
             for _ in 0 ..< 12 {
                 if stopDemoFlag { break }
