@@ -170,8 +170,8 @@ make typeclick
 
 **TypeBar.app** — the same typewriter as a menu-bar icon ⌨️: on/off toggle,
 per-group waveform + repeat count (bursts are unmistakable on any hardware),
-gap presets, pattern test, **▶ mode demo** (all groups in sequence with a
-status line — easy to compare). Shares `~/.typeclickrc` with the CLI version.
+gap presets, pattern test, **▶ mode demo** (effects 1–6 in sequence with
+a status line — easy to compare). Shares `~/.typeclickrc` with the CLI version.
 ```bash
 make typebar-app
 open TypeBar.app
