@@ -35,6 +35,7 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
     var minGapMs = 15.0
     var reps = ["key": 1, "space": 1, "tab": 1, "enter": 2, "delete": 1, "esc": 1]
     var enabled = false
+    var wantOn = true // хочет ли пользователь включённый режим
 
     var item: NSStatusItem!
     var toggleItem: NSMenuItem!
@@ -59,6 +60,15 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
         item.menu = buildMenu()
         refreshStates()
         startTap() // сразу включаемся, как демон
+    }
+
+    // Сюда попадаем, когда пользователь возвращается из Настроек, —
+    // пробуем включиться тихо: доступ могли только что дать.
+    func applicationDidBecomeActive(_ notification: Notification) {
+        if wantOn && !enabled {
+            startTap(showAlert: false)
+            refreshStates()
+        }
     }
 
     // ---------- меню ----------
@@ -155,7 +165,13 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
     }
 
     @objc func toggle() {
-        enabled ? stopTap() : startTap()
+        if enabled {
+            wantOn = false
+            stopTap()
+        } else {
+            wantOn = true
+            startTap()
+        }
         refreshStates()
     }
 
@@ -210,9 +226,11 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
         return driver != nil
     }
 
-    func startTap() {
+    func startTap(showAlert: Bool = true) {
         guard ensureDriver() else {
-            alert("Нет Taptic Engine", "Не нашлось устройство с вибромотором.")
+            if showAlert {
+                alert("Нет Taptic Engine", "Не нашлось устройство с вибромотором.")
+            }
             return
         }
         if gTap == nil {
@@ -223,9 +241,13 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
                                               eventsOfInterest: mask,
                                               callback: keyTapCallback,
                                               userInfo: nil) else {
-                alert("Нужен доступ",
-                      "Открой: Системные настройки → Конфиденциальность → " +
-                      "Мониторинг ввода → добавь TypeBar.")
+                if showAlert {
+                    alert("Нужен доступ",
+                          "Открой: Системные настройки → Конфиденциальность → " +
+                          "Мониторинг ввода → добавь TypeBar (кнопкой +).\n\n" +
+                          "Важно: после выдачи доступа полностью выйди из TypeBar " +
+                          "(меню → Выйти) и запусти заново — иначе не заработает.")
+                }
                 return
             }
             let src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
