@@ -40,7 +40,8 @@ private func hidValueCallback(context: UnsafeMutableRawPointer?, result: IORetur
 final class HIDKeys {
     var onUsage: ((UInt32) -> Void)?
     private var mgr: IOHIDManager?
-    private var pressed = Set<UInt32>()
+    private struct DK: Hashable { var d: UInt; var u: UInt32 }
+    private var pressed = [DK: Double]()
     private(set) var keyboardCount = 0
     var diag = ""
 
@@ -104,15 +105,43 @@ final class HIDKeys {
         return keyboardCount > 0
     }
 
+    // Два стиля отчётов (видно в живом логе: за настоящим usage идёт 0xffffffff):
+    //  - per-key: usage клавиши в ЭЛЕМЕНТЕ, значение 0/1;
+    //  - массив: в элементе мусор (0/0xFFFFFFFF), сам usage в ЗНАЧЕНИИ,
+    //    0 = слот освободился (какая именно клавиша ушла — неизвестно).
     fileprivate func handleValue(sender: UnsafeMutableRawPointer?, value: IOHIDValue) {
         let el = IOHIDValueGetElement(value)
         guard IOHIDElementGetUsagePage(el) == 0x07 else { return }
-        let usage = IOHIDElementGetUsage(el)
-        if IOHIDValueGetIntegerValue(value) != 0 {
-            if pressed.insert(usage).inserted { onUsage?(usage) }
+        let eu = IOHIDElementGetUsage(el)
+        let iv = IOHIDValueGetIntegerValue(value)
+        let now = Date().timeIntervalSinceReferenceDate
+        var dev: UInt = 0
+        if let s = sender { dev = UInt(bitPattern: Int(bitPattern: s)) }
+        if eu == 0 || eu == 0xFFFFFFFF {
+            // стиль «массив»
+            if iv == 0 {
+                // слот освободился — чистим залипшее этого устройства
+                pressed = pressed.filter { $0.key.d != dev }
+            } else {
+                let k = DK(d: dev, u: UInt32(iv))
+                if pressed[k] == nil {
+                    pressed[k] = now
+                    onUsage?(UInt32(iv))
+                }
+            }
         } else {
-            pressed.remove(usage)
+            // стиль «per-key»
+            let k = DK(d: dev, u: eu)
+            if iv != 0 {
+                if pressed[k] == nil {
+                    pressed[k] = now
+                    onUsage?(eu)
+                }
+            } else {
+                pressed.removeValue(forKey: k)
+            }
         }
+        for (k, v) in pressed where now - v > 3 { pressed.removeValue(forKey: k) }
     }
 }
 
@@ -128,6 +157,7 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
     let waveNames = ["", "слабый клик", "сильный клик", "buzz",
                      "лёгкий тап", "средний тап", "сильный тап"]
     var minGapMs = 15.0
+    var repGapMs = 120.0 // пауза между ударами паттерна (общая с CLI: repgap=)
     var reps = ["key": 1, "space": 1, "tab": 1, "enter": 2, "delete": 1, "esc": 1]
     var enabled = false
     var wantOn = true // хочет ли пользователь включённый режим
@@ -328,10 +358,11 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
     func burst(group g: String) {
         let w = waves[g] ?? 4
         let r = reps[g] ?? 1
+        let gap = UInt32(repGapMs * 1000)
         DispatchQueue.global().async { [weak self] in
             var ok = false
             for i in 0 ..< r {
-                if i > 0 { usleep(70000) }
+                if i > 0 { usleep(gap) }
                 ok = self?.driver?.fire(Int32(w)) ?? false
             }
             self?.dlog("fire \(g)=\(w)x\(r) ok=\(ok)", always: true)
@@ -477,7 +508,12 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
             let kv = line.split(separator: "=", maxSplits: 1).map {
                 $0.trimmingCharacters(in: .whitespaces)
             }
-            guard kv.count == 2, waves[kv[0]] != nil else { continue }
+            guard kv.count == 2 else { continue }
+            if kv[0] == "repgap" {
+                if let n = Int(kv[1]), (20 ... 500).contains(n) { repGapMs = Double(n) }
+                continue
+            }
+            guard waves[kv[0]] != nil else { continue }
             // формат: W или WxR
             let parts = kv[1].split(separator: "x", maxSplits: 1).map {
                 $0.trimmingCharacters(in: .whitespaces)
@@ -499,7 +535,7 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
             let w = waves[g] ?? 4
             let r = reps[g] ?? 1
             return r == 1 ? "\(g)=\(w)" : "\(g)=\(w)x\(r)"
-        }.joined(separator: "\n") + "\n"
+        }.joined(separator: "\n") + "\nrepgap=\(Int(repGapMs))\n"
         try? s.write(to: cfgURL, atomically: true, encoding: .utf8)
     }
 

@@ -129,14 +129,16 @@ static void fire_raw(int wave) {
     CFRelease(act);
 }
 
-/* Паттерн: rep ударов с паузой 70 мс — на любом железе отличим от одиночки. */
+/* Паттерн: rep ударов с паузой — на любом железе отличим от одиночки.
+ * Пауза важна: слишком частые удары драйвер может сливать в один. */
+static int g_rep_gap_ms = 120;
 static void fire_pat(Pat p) {
     if (p.wave <= 0 || p.rep <= 0) return;
     double now = now_sec();
     if (now - g_last_fire < g_min_gap) return; // защита от пулемёта
     g_last_fire = now;
     for (int i = 0; i < p.rep; i++) {
-        if (i > 0) usleep(70000);
+        if (i > 0) usleep((useconds_t)g_rep_gap_ms * 1000);
         fire_raw(p.wave);
     }
 }
@@ -186,6 +188,7 @@ static char g_cfg_path[4096] = "";
 static time_t g_cfg_mtime = 0;
 static long g_cfg_mtime_ns = 0;
 static int g_cfg_have = 0;
+static int cli_repgap = 0; // пауза задана флагом — конфиг её не трогает
 
 /* Формат паттерна: "W" или "WxR", W=waveform 1..6, R=повторы 1..4. */
 static int parse_pat(const char *v, Pat *out) {
@@ -239,6 +242,14 @@ static void load_config(void) {
         *eq = '\0';
         char *k = trim(s);
         char *v = trim(eq + 1);
+        if (!strcmp(k, "repgap")) { // глобальная пауза повторов, мс
+            if (!cli_repgap) {
+                long n = atol(v);
+                if (n >= 20 && n <= 500) g_rep_gap_ms = (int)n;
+                else fprintf(stderr, "warn: config: 'repgap' ждёт 20..500\n");
+            }
+            continue;
+        }
         Pat *dst = NULL;
         int locked = 0;
         if (!strcmp(k, "space")) { dst = &p_space; locked = cli_locked[0]; }
@@ -295,6 +306,8 @@ static void usage(const char *prog) {
         "  --test-wave N           один удар N и выйти\n"
         "  --probe-key CODE        какой waveform у кода клавиши (49 пробел,\n"
         "                          36 ввод, 51 стереть, 53 esc) и выйти\n"
+        "  --rep-gap MS            пауза между ударами паттерна, мс 20..500\n"
+        "                          (по умолч. 120; если повторы сливаются — ставь больше)\n"
         "  --min-gap MS            минимум между щелчками, мс (по умолч. 15)\n"
         "  -v                      печатать каждый код клавиши\n"
         "  -d ID                   ID устройства вручную\n"
@@ -319,6 +332,7 @@ int main(int argc, char *argv[]) {
         {"list", no_argument, 0, 1010},
         {"test-wave", required_argument, 0, 1011},
         {"probe-key", required_argument, 0, 1012},
+        {"rep-gap", required_argument, 0, 1013},
         {0, 0, 0, 0}
     };
     int opt;
@@ -356,6 +370,13 @@ int main(int argc, char *argv[]) {
             }
             break;
         case 1012: probe_key = atoi(optarg); break;
+        case 1013: {
+            long v = atol(optarg);
+            if (v < 20 || v > 500) { fprintf(stderr, "error: --rep-gap 20..500\n"); return 1; }
+            g_rep_gap_ms = (int)v;
+            cli_repgap = 1;
+            break;
+        }
         case 'v': g_verbose = 1; break;
         case 'd': g_device = atoll(optarg); break;
         case 'h': usage(argv[0]); return 0;
