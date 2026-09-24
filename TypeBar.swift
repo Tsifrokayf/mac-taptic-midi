@@ -60,6 +60,16 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
         item.menu = buildMenu()
         refreshStates()
         startTap() // сразу включаемся, как демон
+        // Тихий повтор каждые 3 с, пока не включимся: покрывает случай,
+        // когда доступ дали уже после запуска (окно активации может не прийти
+        // агентному приложению, а модальный алерт вообще стопает ранлуп).
+        Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            if self.wantOn && !self.enabled {
+                self.startTap(showAlert: false)
+                self.refreshStates()
+            }
+        }
     }
 
     // Сюда попадаем, когда пользователь возвращается из Настроек, —
