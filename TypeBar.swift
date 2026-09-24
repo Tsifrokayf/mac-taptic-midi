@@ -4,6 +4,8 @@
 // том же файле, что у CLI-версии typeclick (подхватывает наживую).
 // Сборка: make typebar-app.
 import AppKit
+import IOKit
+import IOKit.hid
 
 private var gTap: CFMachPort?
 
@@ -19,6 +21,69 @@ private func keyTapCallback(proxy: CGEventTapProxy, type: CGEventType,
     }
     guard let e = event else { return nil }
     return Unmanaged.passUnretained(e)
+}
+
+// ---------- клавиатуры напрямую через HID (без доступа вообще) ----------
+// Event tap точен, но требует «Мониторинг ввода», который может не липнуть
+// к ad-hoc сборке. HID читает те же нажатия как ввод с устройства —
+// доступ не нужен. Использование HID 0x07: 0x2C пробел, 0x28 ввод,
+// 0x2A стереть, 0x29 esc, 0x2B tab, 0xE0–0xE7 модификаторы.
+
+private var sharedHID: HIDKeys?
+
+private func hidValueCallback(context: UnsafeMutableRawPointer?, result: IOReturn,
+                              sender: UnsafeMutableRawPointer?, value: IOHIDValue?) {
+    guard let v = value else { return }
+    sharedHID?.handleValue(sender: sender, value: v)
+}
+
+final class HIDKeys {
+    var onUsage: ((UInt32) -> Void)?
+    private var mgr: IOHIDManager?
+    private var pressed = Set<UInt32>()
+    private(set) var keyboardCount = 0
+    var diag = ""
+
+    init?() {
+        let m = IOHIDManagerCreate(kCFAllocatorDefault,
+                                   IOOptionBits(kIOHIDOptionsTypeNone))
+        let match: [String: Any] = [
+            kIOHIDDeviceUsagePageKey as String: NSNumber(value: UInt32(0x01)),
+            kIOHIDDeviceUsageKey as String: NSNumber(value: UInt32(0x06)),
+        ]
+        IOHIDManagerSetDeviceMatching(m, match as CFDictionary)
+        IOHIDManagerRegisterInputValueCallback(m, hidValueCallback, nil)
+        // колбэки едут на ранлуп вызывавшего — звать только с main
+        IOHIDManagerScheduleWithRunLoop(m, CFRunLoopGetCurrent(),
+                                        CFRunLoopMode.defaultMode.rawValue as CFString)
+        mgr = m
+        sharedHID = self
+    }
+
+    /// Открыть устройства. Возвращает true, если есть хоть одна клавиатура.
+    /// Важно: результат Open игнорируем — он часто отдаёт ExclusiveAccess
+    /// (клавиатуры уже держит Karabiner и т.п.), при этом перечисление
+    /// устройств и колбэки ввода продолжают работать.
+    func start() -> Bool {
+        guard let m = mgr else { return false }
+        let r = IOHIDManagerOpen(m, IOOptionBits(kIOHIDOptionsTypeNone))
+        let raw = IOHIDManagerCopyDevices(m)
+        let n = (raw as NSSet?)?.count ?? -1
+        diag = String(format: "open=0x%x n=%d", UInt32(bitPattern: Int32(r)), n)
+        keyboardCount = max(0, n)
+        return keyboardCount > 0
+    }
+
+    fileprivate func handleValue(sender: UnsafeMutableRawPointer?, value: IOHIDValue) {
+        let el = IOHIDValueGetElement(value)
+        guard IOHIDElementGetUsagePage(el) == 0x07 else { return }
+        let usage = IOHIDElementGetUsage(el)
+        if IOHIDValueGetIntegerValue(value) != 0 {
+            if pressed.insert(usage).inserted { onUsage?(usage) }
+        } else {
+            pressed.remove(usage)
+        }
+    }
 }
 
 final class TypeBarApp: NSObject, NSApplicationDelegate {
@@ -39,11 +104,30 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
 
     var item: NSStatusItem!
     var toggleItem: NSMenuItem!
+    var sourceItem: NSMenuItem!
     var groupMenus = [String: [NSMenuItem]]()
     var repMenus = [String: [NSMenuItem]]()
     var gapItems = [NSMenuItem]()
     var driver: HapticDriver?
     var lastFire = -1.0
+    var hid: HIDKeys?
+    var source = "—"
+    var lastOutcome = ""
+
+    /// Диагностика в файл (меню для этого слишком тесно).
+    func dlog(_ s: String) {
+        if s == lastOutcome { return }
+        lastOutcome = s
+        let line = "\(s)\n"
+        guard let d = line.data(using: .utf8) else { return }
+        if let fh = FileHandle(forWritingAtPath: "/tmp/typebar.log") {
+            fh.seekToEndOfFile()
+            fh.write(d)
+            fh.closeFile()
+        } else {
+            try? line.write(toFile: "/tmp/typebar.log", atomically: true, encoding: .utf8)
+        }
+    }
 
     var cfgURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -58,8 +142,8 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "⌨️"
         item.menu = buildMenu()
-        refreshStates()
         startTap() // сразу включаемся, как демон
+        refreshStates() // после startTap: там уже известны источник и статус
         // Тихий повтор каждые 3 с, пока не включимся: покрывает случай,
         // когда доступ дали уже после запуска (окно активации может не прийти
         // агентному приложению, а модальный алерт вообще стопает ранлуп).
@@ -89,6 +173,10 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
                                 keyEquivalent: "")
         toggleItem.target = self
         m.addItem(toggleItem)
+
+        sourceItem = NSMenuItem(title: "Источник: —", action: nil, keyEquivalent: "")
+        sourceItem.isEnabled = false
+        m.addItem(sourceItem)
 
         m.addItem(.separator())
 
@@ -155,6 +243,7 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
     func refreshStates() {
         toggleItem.state = enabled ? .on : .off
         toggleItem.title = enabled ? "Печатная машинка: вкл" : "Печатная машинка: выкл"
+        sourceItem.title = "Источник: \(source)"
         for (id, items) in groupMenus {
             let cur = waves[id] ?? 4
             for it in items {
@@ -238,34 +327,59 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
 
     func startTap(showAlert: Bool = true) {
         guard ensureDriver() else {
+            source = "нет Taptic"
+            dlog("driver=nil")
             if showAlert {
                 alert("Нет Taptic Engine", "Не нашлось устройство с вибромотором.")
             }
             return
         }
+        dlog("driver=ok")
+        // 1. event tap: точен, но требует «Мониторинг ввода»
         if gTap == nil {
             let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
-            guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap,
-                                              place: .headInsertEventTap,
-                                              options: .defaultTap,
-                                              eventsOfInterest: mask,
-                                              callback: keyTapCallback,
-                                              userInfo: nil) else {
-                if showAlert {
-                    alert("Нужен доступ",
-                          "Открой: Системные настройки → Конфиденциальность → " +
-                          "Мониторинг ввода → добавь TypeBar (кнопкой +).\n\n" +
-                          "Важно: после выдачи доступа полностью выйди из TypeBar " +
-                          "(меню → Выйти) и запусти заново — иначе не заработает.")
-                }
-                return
+            if let tap = CGEvent.tapCreate(tap: .cgSessionEventTap,
+                                           place: .headInsertEventTap,
+                                           options: .defaultTap,
+                                           eventsOfInterest: mask,
+                                           callback: keyTapCallback,
+                                           userInfo: nil) {
+                let src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+                CFRunLoopAddSource(CFRunLoopGetCurrent(), src, .commonModes)
+                gTap = tap
             }
-            let src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-            CFRunLoopAddSource(CFRunLoopGetCurrent(), src, .commonModes)
-            gTap = tap
         }
-        CGEvent.tapEnable(tap: gTap!, enable: true)
-        enabled = true
+        if let t = gTap {
+            CGEvent.tapEnable(tap: t, enable: true)
+            enabled = true
+            source = "тап"
+            dlog("tap=ok")
+            return
+        }
+        dlog("tap=nil")
+        // 2. фолбэк: HID-клавиатуры напрямую, доступ вообще не нужен
+        if hid == nil {
+            let h = HIDKeys()
+            h?.onUsage = { [weak self] u in self?.handleUsage(u) }
+            hid = h
+        }
+        if let h = hid, h.start(), h.keyboardCount > 0 {
+            enabled = true
+            source = "HID (\(h.keyboardCount) клав.)"
+            dlog("hid=ok n=\(h.keyboardCount)")
+            return
+        }
+        if let h = hid {
+            source = "HID? \(h.diag)"
+            dlog("hid=fail \(h.diag)")
+            refreshStates()
+        }
+        if showAlert {
+            alert("Не вижу клавиатуру",
+                  "Event tap без доступа, а HID-устройств не нашлось.\n\n" +
+                  "Дай доступ: Системные настройки → Конфиденциальность → " +
+                  "Мониторинг ввода → добавь TypeBar, затем выйди и запусти заново.")
+        }
     }
 
     func stopTap() {
@@ -285,6 +399,27 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
         case 54, 55, 58, 59, 60, 61, 62, 63: return // модификаторы молчат
         default: g = "key"
         }
+        fireGroup(g)
+    }
+
+    /// Та же таблица, но для HID-usage (0x07): пробел 0x2C, ввод 0x28,
+    /// стереть 0x2A, esc 0x29, tab 0x2B, модификаторы 0xE0–0xE7 молчат.
+    func handleUsage(_ usage: UInt32) {
+        guard enabled else { return }
+        let g: String
+        switch usage {
+        case 0x2C: g = "space"
+        case 0x2B: g = "tab"
+        case 0x28: g = "enter"
+        case 0x2A: g = "delete"
+        case 0x29: g = "esc"
+        case 0xE0...0xE7: return
+        default: g = "key"
+        }
+        fireGroup(g)
+    }
+
+    func fireGroup(_ g: String) {
         let now = mono()
         if now - lastFire < minGapMs / 1000.0 { return }
         lastFire = now
