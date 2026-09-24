@@ -5,7 +5,7 @@
  * (приватный MultitouchSupport.framework через dlopen — ARM-safe).
  * Модификаторы (shift/cmd/...) не щёлкают, пробел/ввод/стереть/esc — свои звуки.
  * Звуки настраиваются: флаги --space/--enter/... или файл ~/.typeclickrc
- * (строки вида `space=5`, перечитывается наживую при каждом нажатии).
+ * (строки вида `space=5x2` — waveform и повторы, перечитывается наживую).
  * Прощупать все паттерны: ./typeclick --list
  *
  * ВНИМАНИЕ: нужен доступ «Мониторинг ввода»:
@@ -118,10 +118,9 @@ static double now_sec(void) {
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
 
-static void fire(int wave) {
-    double now = now_sec();
-    if (now - g_last_fire < g_min_gap) return; // защита от пулемёта
-    g_last_fire = now;
+typedef struct { int wave, rep; } Pat;
+
+static void fire_raw(int wave) {
     CFTypeRef act = pCreate((uint64_t)g_device);
     if (!act) return;
     if (pOpen(act, 0) == kIOReturnSuccess)
@@ -130,12 +129,26 @@ static void fire(int wave) {
     CFRelease(act);
 }
 
+/* Паттерн: rep ударов с паузой 70 мс — на любом железе отличим от одиночки. */
+static void fire_pat(Pat p) {
+    if (p.wave <= 0 || p.rep <= 0) return;
+    double now = now_sec();
+    if (now - g_last_fire < g_min_gap) return; // защита от пулемёта
+    g_last_fire = now;
+    for (int i = 0; i < p.rep; i++) {
+        if (i > 0) usleep(70000);
+        fire_raw(p.wave);
+    }
+}
+
 /* ---------- клавиши ---------- */
 
-/* keycode -> waveform (0 = молчать). Коды CG: 49 пробел, 36 ввод,
+/* keycode -> паттерн (waveform + повторы). Коды CG: 49 пробел, 36 ввод,
 // 51 стереть, 53 esc, 48 tab, 54-63 модификаторы.
-// Значения по умолчанию: esc — buzz, его ни с чем не спутать. */
-static int w_space = 5, w_tab = 5, w_enter = 2, w_del = 1, w_esc = 3, w_key = 4;
+// Одиночные waveforms на части железа сливаются — поэтому контраст
+// делается повторами: ввод — двойной, esc — buzz. Формат: W или WxR. */
+static Pat p_space = {5, 1}, p_tab = {5, 1}, p_enter = {2, 2},
+           p_del = {1, 1}, p_esc = {3, 1}, p_key = {4, 1};
 // 1 = группа задана флагом командной строки — конфиг её не трогает
 static int cli_locked[6] = {0, 0, 0, 0, 0, 0}; // space,tab,enter,delete,esc,key
 
@@ -147,21 +160,23 @@ static const char *wave_name(int w) {
         case 4: return "лёгкий тап";
         case 5: return "средний тап";
         case 6: return "сильный тап";
+        case 15: return "мягкий глухой";
+        case 16: return "сильный глухой";
         default: return "?";
     }
 }
 
-static int wave_for_key(int code) {
+static Pat pat_for_key(int code) {
     switch (code) {
-        case 49: return w_space;
-        case 48: return w_tab;
-        case 36: return w_enter;
-        case 51: return w_del;
-        case 53: return w_esc;
+        case 49: return p_space;
+        case 48: return p_tab;
+        case 36: return p_enter;
+        case 51: return p_del;
+        case 53: return p_esc;
         case 54: case 55: case 58: case 59:
         case 60: case 61: case 62: case 63:
-            return 0;      // модификаторы молчат
-        default: return w_key;
+            return (Pat){0, 0}; // модификаторы молчат
+        default: return p_key;
     }
 }
 
@@ -171,6 +186,24 @@ static char g_cfg_path[4096] = "";
 static time_t g_cfg_mtime = 0;
 static long g_cfg_mtime_ns = 0;
 static int g_cfg_have = 0;
+
+/* Формат паттерна: "W" или "WxR", W=waveform 1..6, R=повторы 1..4. */
+static int parse_pat(const char *v, Pat *out) {
+    char *e = NULL;
+    long w = strtol(v, &e, 10);
+    if (e == v || w < 1 || w > 6) return -1;
+    long r = 1;
+    if (*e == 'x' || *e == 'X') {
+        char *e2 = NULL;
+        r = strtol(e + 1, &e2, 10);
+        if (e2 == e + 1 || *e2 != '\0' || r < 1 || r > 4) return -1;
+    } else if (*e != '\0') {
+        return -1;
+    }
+    out->wave = (int)w;
+    out->rep = (int)r;
+    return 0;
+}
 
 static int parse_wave(const char *v, int *out) {
     char *e = NULL;
@@ -206,22 +239,22 @@ static void load_config(void) {
         *eq = '\0';
         char *k = trim(s);
         char *v = trim(eq + 1);
-        int *dst = NULL;
+        Pat *dst = NULL;
         int locked = 0;
-        if (!strcmp(k, "space")) { dst = &w_space; locked = cli_locked[0]; }
-        else if (!strcmp(k, "tab")) { dst = &w_tab; locked = cli_locked[1]; }
-        else if (!strcmp(k, "enter")) { dst = &w_enter; locked = cli_locked[2]; }
-        else if (!strcmp(k, "delete")) { dst = &w_del; locked = cli_locked[3]; }
-        else if (!strcmp(k, "esc")) { dst = &w_esc; locked = cli_locked[4]; }
-        else if (!strcmp(k, "key")) { dst = &w_key; locked = cli_locked[5]; }
+        if (!strcmp(k, "space")) { dst = &p_space; locked = cli_locked[0]; }
+        else if (!strcmp(k, "tab")) { dst = &p_tab; locked = cli_locked[1]; }
+        else if (!strcmp(k, "enter")) { dst = &p_enter; locked = cli_locked[2]; }
+        else if (!strcmp(k, "delete")) { dst = &p_del; locked = cli_locked[3]; }
+        else if (!strcmp(k, "esc")) { dst = &p_esc; locked = cli_locked[4]; }
+        else if (!strcmp(k, "key")) { dst = &p_key; locked = cli_locked[5]; }
         else { fprintf(stderr, "warn: config: неизвестный ключ '%s'\n", k); continue; }
         if (locked) continue; // флаг командной строки важнее файла
-        int n = 0;
-        if (parse_wave(v, &n) != 0) {
-            fprintf(stderr, "warn: config: '%s' ждёт число 1..6\n", k);
+        Pat pn = {0, 0};
+        if (parse_pat(v, &pn) != 0) {
+            fprintf(stderr, "warn: config: '%s' ждёт W или WxR (wave 1..6, повторы 1..4)\n", k);
             continue;
         }
-        *dst = n;
+        *dst = pn;
     }
     fclose(f);
     g_cfg_mtime = st.st_mtime;
@@ -239,21 +272,26 @@ static CGEventRef key_callback(CGEventTapProxy proxy, CGEventType type,
     if (type != kCGEventKeyDown) return event;
     int code = (int)CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
     load_config(); // конфиг перечитывается наживую
-    int w = wave_for_key(code);
-    if (g_verbose) printf("key %d -> wave %d (%s)\n", code, w, wave_name(w));
-    if (w > 0) fire(w);
+    Pat p = pat_for_key(code);
+    if (g_verbose) {
+        if (p.rep > 1)
+            printf("key %d -> %dx%d (%s)\n", code, p.wave, p.rep, wave_name(p.wave));
+        else
+            printf("key %d -> wave %d (%s)\n", code, p.wave, wave_name(p.wave));
+    }
+    fire_pat(p);
     return event; // событие пропускаем дальше — печать не ломаем
 }
 
 static void usage(const char *prog) {
     fprintf(stderr,
         "Использование: %s [опции]\n"
-        "  --space N --tab N --enter N --delete N --esc N --key N\n"
-        "                          waveform 1..6 на группы клавиш\n"
-        "                          (по умолч.: key=4 space=5 tab=5 enter=2 delete=1 esc=3)\n"
-        "  --config PATH           конфиг вида `space=5` (по умолч. ~/.typeclickrc,\n"
+        "  --space P --tab P --enter P --delete P --esc P --key P\n"
+        "                          паттерн W или WxR (waveform 1..6, повторы 1..4)\n"
+        "                          (по умолч.: key=4 space=5 tab=5 enter=2x2 delete=1 esc=3)\n"
+        "  --config PATH           конфиг вида `space=5x2` (по умолч. ~/.typeclickrc,\n"
         "                          перечитывается наживую при каждом нажатии)\n"
-        "  --list                  прощупать waveform 1..6 и выйти\n"
+        "  --list                  прощупать waveform 1..6, 15, 16 и выйти\n"
         "  --test-wave N           один удар N и выйти\n"
         "  --probe-key CODE        какой waveform у кода клавиши (49 пробел,\n"
         "                          36 ввод, 51 стереть, 53 esc) и выйти\n"
@@ -285,7 +323,6 @@ int main(int argc, char *argv[]) {
     };
     int opt;
     while ((opt = getopt_long(argc, argv, "vd:h", opts, NULL)) != -1) {
-        int n = 0;
         switch (opt) {
         case 1001:
             g_min_gap = atof(optarg) / 1000.0;
@@ -300,10 +337,14 @@ int main(int argc, char *argv[]) {
         }
         case 1003: case 1004: case 1005:
         case 1006: case 1007: case 1008: {
-            if (parse_wave(optarg, &n) != 0) { fprintf(stderr, "error: нужен waveform 1..6\n"); return 1; }
+            Pat pn = {0, 0};
+            if (parse_pat(optarg, &pn) != 0) {
+                fprintf(stderr, "error: формат W или WxR (wave 1..6, повторы 1..4)\n");
+                return 1;
+            }
             // порядок групп: space,tab,enter,delete,esc,key
-            int *dsts[] = {&w_space, &w_tab, &w_enter, &w_del, &w_esc, &w_key};
-            *dsts[opt - 1003] = n;
+            Pat *dsts[] = {&p_space, &p_tab, &p_enter, &p_del, &p_esc, &p_key};
+            *dsts[opt - 1003] = pn;
             cli_locked[opt - 1003] = 1;
             break;
         }
@@ -334,8 +375,11 @@ int main(int argc, char *argv[]) {
     load_config(); // стартовые значения из файла (флаги уже залочены выше)
 
     if (probe_key >= 0) { // устройство не нужно — только маппинг
-        int w = wave_for_key(probe_key);
-        printf("key %d -> wave %d (%s)\n", probe_key, w, wave_name(w));
+        Pat p = pat_for_key(probe_key);
+        if (p.rep > 1)
+            printf("key %d -> %dx%d (%s)\n", probe_key, p.wave, p.rep, wave_name(p.wave));
+        else
+            printf("key %d -> wave %d (%s)\n", probe_key, p.wave, wave_name(p.wave));
         return 0;
     }
 
@@ -349,12 +393,14 @@ int main(int argc, char *argv[]) {
     }
 
     if (list_mode) {
-        printf("Waveform 1..6 (палец на трекпаде!):\n");
-        for (int w = 1; w <= 6; w++) {
+        printf("Waveform 1..6, 15, 16 (палец на трекпаде!):\n");
+        int ids[] = {1, 2, 3, 4, 5, 6, 15, 16};
+        for (int i = 0; i < 8; i++) {
+            int w = ids[i];
             printf("  %d (%s)... ", w, wave_name(w));
             fflush(stdout);
             g_last_fire = -1;
-            fire(w);
+            fire_raw(w);
             printf("ok\n");
             usleep(600000);
         }
@@ -364,7 +410,7 @@ int main(int argc, char *argv[]) {
         printf("wave %d (%s), палец на трекпаде!\n", test_wave, wave_name(test_wave));
         fflush(stdout);
         g_last_fire = -1;
-        fire(test_wave);
+        fire_raw(test_wave);
         return 0;
     }
 

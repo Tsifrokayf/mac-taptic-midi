@@ -151,16 +151,25 @@ Full list: `./audio_haptic --help`
 ## More toys
 
 **typeclick** — typewriter clicks: every keypress fires the Taptic Engine.
-Default: letters = light tap, space/tab = medium, enter = strong click,
-backspace = weak, esc = buzz (unmistakable), modifiers stay silent.
-Tune each group: `--space/--tab/--enter/--delete/--esc/--key 1..6`
+Single waveforms blur together on some hardware, so contrast comes from
+patterns: letters = single light tap, space/tab = single medium,
+enter = DOUBLE strong click, backspace = weak, esc = buzz, modifiers silent.
+Tune each group: `--space/--tab/--enter/--delete/--esc/--key W or WxR`
 (feel them first with `--list`, check with `--probe-key 49`),
-or write `~/.typeclickrc` (`space=5` per line, reloaded live).
+or write `~/.typeclickrc` (`enter=2x2` per line, reloaded live).
 Needs Input Monitoring permission: System Settings →
 Privacy → Input Monitoring → add `typeclick`.
 ```bash
 make typeclick
 ./typeclick -v   # Ctrl-C to quit, finger on the trackpad
+```
+
+**TypeBar.app** — the same typewriter as a menu-bar icon ⌨️: on/off toggle,
+per-group waveform + repeat count (bursts are unmistakable on any hardware),
+gap presets, pattern test. Shares `~/.typeclickrc` with the CLI version.
+```bash
+make typebar-app
+open TypeBar.app
 ```
 
 **RhythmGame.app** — rhythm game on the trackpad: drop a MIDI onto the window
@@ -189,6 +198,7 @@ Details in `android/README.md` (in Russian).
 - `main.swift` — GUI entry point
 - `typeclick.c` — typewriter clicks via a global key tap
 - `RhythmGame.swift` (+ `game-main.swift`, `RhythmGame-Info.plist`) — trackpad rhythm game (`make rhythm-app`)
+- `TypeBar.swift` (+ `typebar-main.swift`, `TypeBar-Info.plist`) — typewriter settings in the menu bar (`make typebar-app`)
 - `Info.plist`, `gen_icon.py` — `.app` bundle build (`make app`)
 - `Makefile` — `make` (engines), `make MidiHapticApp` (window), `make app` (bundle)
 - `gen_test_midi.py` — dependency-free test MIDI generator

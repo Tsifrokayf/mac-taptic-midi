@@ -79,13 +79,29 @@ MidiHaptic-intel.dmg: app-intel
 	rm -rf /tmp/dmgroot-intel
 
 clean:
-	rm -rf midi_haptic audio_haptic typeclick MidiHapticApp $(APP) MidiHapticApp.iconset build-intel MidiHaptic-arm64.dmg MidiHaptic-intel.dmg MidiHaptic.dmg RhythmGame RhythmGame.app
+	rm -rf midi_haptic audio_haptic typeclick TypeBar MidiHapticApp $(APP) MidiHapticApp.iconset build-intel MidiHaptic-arm64.dmg MidiHaptic-intel.dmg MidiHaptic.dmg RhythmGame RhythmGame.app $(TYPEBAR_APP)
 
 .PHONY: all clean intel app-intel
 
 # --- Печатная машинка: щелчок на каждое нажатие (нужен «Мониторинг ввода») ---
 typeclick: typeclick.c
 	$(CC) $(CFLAGS) -arch arm64 -o typeclick typeclick.c $(LDFLAGS_ARM) -framework ApplicationServices
+
+# --- Настройки печатки в верхней панели (меню-бар, общий конфиг с typeclick) ---
+TypeBar: TypeBar.swift HapticDriver.swift typebar-main.swift
+	swiftc -O -o TypeBar TypeBar.swift HapticDriver.swift typebar-main.swift $(SWIFT_FW)
+
+TYPEBAR_APP = TypeBar.app
+
+typebar-app: TypeBar
+	rm -rf $(TYPEBAR_APP)
+	mkdir -p $(TYPEBAR_APP)/Contents/MacOS $(TYPEBAR_APP)/Contents/Resources
+	cp TypeBar $(TYPEBAR_APP)/Contents/MacOS/
+	cp TypeBar-Info.plist $(TYPEBAR_APP)/Contents/Info.plist
+	python3 gen_icon.py
+	iconutil -c icns MidiHapticApp.iconset -o $(TYPEBAR_APP)/Contents/Resources/AppIcon.icns
+	rm -rf MidiHapticApp.iconset
+	@echo "Готово: $(TYPEBAR_APP) — иконка ⌨️ в верхней панели"
 
 # --- Ритм-игра на трекпаде ---
 RhythmGame: RhythmGame.swift HapticDriver.swift game-main.swift

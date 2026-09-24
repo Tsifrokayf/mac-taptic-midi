@@ -145,16 +145,25 @@ make intel      # Intel-маки (x86_64, нужен Xcode CLT)
 ## Ещё игрушки
 
 **typeclick** — печатная машинка: каждое нажатие щёлкает Taptic Engine.
-По умолчанию: буквы — лёгкий тап, пробел/tab — средний, ввод — сильный клик,
-стереть — слабый, esc — buzz (ни с чем не спутать), модификаторы молчат.
-Настройка каждой группы: `--space/--tab/--enter/--delete/--esc/--key 1..6`
+Одиночные waveforms на части железа сливаются — поэтому контраст делается
+паттернами: буквы — одиночный лёгкий тап, пробел/tab — одиночный средний,
+ввод — ДВОЙНОЙ сильный клик, стереть — слабый, esc — buzz, модификаторы молчат.
+Настройка каждой группы: `--space/--tab/--enter/--delete/--esc/--key W или WxR`
 (сначала прощупай через `--list`, проверь через `--probe-key 49`),
-или файл `~/.typeclickrc` (строки вида `space=5`, перечитывается наживую).
+или файл `~/.typeclickrc` (строки вида `enter=2x2`, перечитывается наживую).
 Нужен доступ «Мониторинг ввода»: Системные настройки →
 Конфиденциальность → Мониторинг ввода → добавить `typeclick`.
 ```bash
 make typeclick
 ./typeclick -v   # выход: Ctrl-C, палец на трекпаде
+```
+
+**TypeBar.app** — та же печатная машинка иконкой ⌨️ в верхней панели:
+вкл/выкл, waveform + повторы на каждую группу (очереди не спутать ни на
+каком железе), пауза, проверка паттернов. Общий `~/.typeclickrc` с CLI-версией.
+```bash
+make typebar-app
+open TypeBar.app
 ```
 
 **RhythmGame.app** — ритм-игра на трекпаде: кинь MIDI на окно
@@ -180,6 +189,7 @@ open RhythmGame.app song.mid
 - `main.swift` — точка входа GUI
 - `typeclick.c` — печатная машинка через глобальный перехват клавиш
 - `RhythmGame.swift` (+ `game-main.swift`, `RhythmGame-Info.plist`) — ритм-игра на трекпаде (`make rhythm-app`)
+- `TypeBar.swift` (+ `typebar-main.swift`, `TypeBar-Info.plist`) — настройки печатки в верхней панели (`make typebar-app`)
 - `Info.plist`, `gen_icon.py` — сборка `.app` бандла (`make app`)
 - `Makefile` — `make` (движок), `make MidiHapticApp` (окно), `make app` (бандл)
 - `gen_test_midi.py` — генератор тестовых MIDI без зависимостей
