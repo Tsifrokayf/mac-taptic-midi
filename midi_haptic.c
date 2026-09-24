@@ -485,6 +485,7 @@ static void usage(const char *prog) {
         "  --device-offset N     оффсет ID устройства в структуре (по умолч. 64,\n"
         "                          обычно не нужен — есть автоподбор)\n"
         "  --immediate             без паузы «старт через 1 сек» (для запуска из GUI)\n"
+        "  -w, --wave N            один удар waveform 1..20 без MIDI-файла (для демо)\n"
         "  -n, --dry-run         только показать ноты и тайминги, без вибрации\n"
         "  -v, --verbose         подробно печатать каждую ноту\n"
         "  -d, --device ID       ID multitouch-устройства (по умолч. авто)\n"
@@ -537,6 +538,7 @@ int main(int argc, char *argv[]) {
     int dry_run = 0, verbose = 0;
     int64_t deviceID = -1;
     int scan_mode = 0, list_mode = 0;
+    int32_t wave_single = 0;
     const char *mid_path = NULL;
 
     static struct option long_opts[] = {
@@ -557,12 +559,13 @@ int main(int argc, char *argv[]) {
         {"device", required_argument, 0, 'd'},
         {"scan", no_argument, 0, 's'},
         {"list", no_argument, 0, 'l'},
+        {"wave", required_argument, 0, 'w'},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "m:t:c:g:nvd:slh", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "m:t:c:g:nvd:slhw:", long_opts, NULL)) != -1) {
         switch (opt) {
         case 'm':
             if (strcmp(optarg, "velocity") == 0) map_mode = MAP_VELOCITY;
@@ -624,6 +627,12 @@ int main(int argc, char *argv[]) {
         case 'd': deviceID = atoll(optarg); break;
         case 's': scan_mode = 1; break;
         case 'l': list_mode = 1; break;
+        case 'w': {
+            long v = atol(optarg);
+            if (v < 1 || v > 20) { fprintf(stderr, "error: --wave 1..20\n"); return 1; }
+            wave_single = (int32_t)v;
+            break;
+        }
         case 'h': usage(argv[0]); return 0;
         default: usage(argv[0]); return 1;
         }
@@ -639,7 +648,7 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    if (!info_only && (list_mode || (mid_path && !dry_run)) && deviceID == -1) {
+    if (!info_only && (list_mode || wave_single > 0 || (mid_path && !dry_run)) && deviceID == -1) {
         deviceID = find_trackpad_device_id(0);
         if (deviceID == -1) {
             fprintf(stderr, "error: Taptic Engine не найден. Нужен макбук с Force Touch трекпадом.\n");
@@ -658,6 +667,15 @@ int main(int argc, char *argv[]) {
             usleep(600000);
         }
         if (!mid_path) return 0;
+    }
+
+    if (wave_single > 0) {
+        printf("Waveform %d (%s), палец на трекпаде!\n",
+               wave_single, waveform_name(wave_single));
+        fflush(stdout);
+        IOReturn r = actuate_once(deviceID, wave_single);
+        printf("%s\n", r == kIOReturnSuccess ? "ok" : "ОШИБКА");
+        if (!mid_path && !list_mode) return (r == kIOReturnSuccess) ? 0 : 1;
     }
 
     if (!mid_path) {

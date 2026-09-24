@@ -293,6 +293,15 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
         testItem.submenu = testSub
         m.addItem(testItem)
 
+        demoItem = NSMenuItem(title: "▶ Демо режимов", action: #selector(demoToggle),
+                              keyEquivalent: "")
+        demoItem.target = self
+        m.addItem(demoItem)
+
+        demoStatusItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        demoStatusItem.isEnabled = false
+        m.addItem(demoStatusItem)
+
         m.addItem(.separator())
         let quit = NSMenuItem(title: "Выйти", action: #selector(NSApp.terminate),
                               keyEquivalent: "q")
@@ -381,6 +390,74 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
         driver?.fire(Int32(sender.tag))
     }
 
+    // ----- демо: все группы по очереди, чтобы сравнить режимы -----
+
+    var demoItem: NSMenuItem!
+    var demoStatusItem: NSMenuItem!
+    var isDemo = false
+    var stopDemoFlag = false
+
+    @objc func demoToggle() {
+        if isDemo {
+            stopDemoFlag = true
+            return
+        }
+        guard ensureDriver() else {
+            alert("Нет Taptic Engine", "Не нашлось устройство с вибромотором.")
+            return
+        }
+        isDemo = true
+        stopDemoFlag = false
+        demoItem.title = "■ Стоп демо"
+        demoSay("Палец на трекпад…")
+        DispatchQueue.global().async { [weak self] in self?.runDemo() }
+    }
+
+    func demoSay(_ s: String) {
+        DispatchQueue.main.async { [weak self] in self?.demoStatusItem.title = s }
+    }
+
+    /// Синхронная очередь ударов для демо (вызывать с фона).
+    func burstSync(group g: String) {
+        let w = waves[g] ?? 4
+        let r = reps[g] ?? 1
+        let gap = UInt32(repGapMs * 1000)
+        for i in 0 ..< r {
+            if stopDemoFlag { break }
+            if i > 0 { usleep(gap) }
+            _ = driver?.fire(Int32(w))
+        }
+    }
+
+    func runDemo() {
+        let order = ["key", "space", "tab", "enter", "delete", "esc"]
+        let titles = ["key": "Буквы", "space": "Пробел", "tab": "Tab",
+                      "enter": "Ввод", "delete": "Стереть", "esc": "Esc"]
+        for _ in 0 ..< 4 {
+            if stopDemoFlag { break }
+            usleep(250000)
+        }
+        for g in order {
+            if stopDemoFlag { break }
+            let w = waves[g] ?? 4
+            let r = reps[g] ?? 1
+            let pat = r == 1 ? "\(w)" : "\(w)x\(r)"
+            demoSay("▶ \(titles[g] ?? g): \(pat) · \(waveNames[w])")
+            burstSync(group: g)
+            for _ in 0 ..< 12 {
+                if stopDemoFlag { break }
+                usleep(100000)
+            }
+        }
+        let stopped = stopDemoFlag
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.isDemo = false
+            self.demoItem.title = "▶ Демо режимов"
+            self.demoStatusItem.title = stopped ? "Демо остановлено" : "Демо готово ✅"
+        }
+    }
+
     // ---------- перехват клавиш ----------
 
     func ensureDriver() -> Bool {
@@ -454,7 +531,7 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
     }
 
     func handleKey(_ code: Int) {
-        guard enabled else { return }
+        guard enabled, !isDemo else { return }
         let g: String
         switch code {
         case 49: g = "space"
@@ -471,7 +548,7 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
     /// Та же таблица, но для HID-usage (0x07): пробел 0x2C, ввод 0x28,
     /// стереть 0x2A, esc 0x29, tab 0x2B, модификаторы 0xE0–0xE7 молчат.
     func handleUsage(_ usage: UInt32) {
-        guard enabled else { return }
+        guard enabled, !isDemo else { return }
         let g: String
         switch usage {
         case 0x2C: g = "space"

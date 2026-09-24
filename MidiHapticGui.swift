@@ -115,6 +115,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource 
     var audioBox = NSButton(checkboxWithTitle: "🔊 звук вместе с вибрацией", target: nil, action: nil)
     var playBtn: NSButton!
     var stopBtn: NSButton!
+    var demoBtn: NSButton!
+    var demoTitle = NSTextField(labelWithString: "Демо: волны, громкость и маппинг по очереди")
+    var pulseDot: PulseDot!
+    var isDemo = false
+
+    /// Пульсирующая точка — визуал демо в духе системных индикаторов.
+    final class PulseDot: NSView {
+        private var dot: CALayer!
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            wantsLayer = true
+            layer?.backgroundColor = NSColor.clear.cgColor
+            dot = CALayer()
+            dot.backgroundColor = NSColor.controlAccentColor.cgColor
+            dot.cornerRadius = 11
+            dot.frame = NSRect(x: 3, y: 3, width: 22, height: 22)
+            layer?.addSublayer(dot)
+        }
+        required init?(coder: NSCoder) { fatalError() }
+        func pulse() {
+            dot.removeAllAnimations()
+            dot.transform = CATransform3DIdentity
+            dot.opacity = 1
+            let s = CABasicAnimation(keyPath: "transform.scale")
+            s.fromValue = 1.0
+            s.toValue = 1.7
+            s.duration = 0.35
+            s.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            let f = CABasicAnimation(keyPath: "opacity")
+            f.fromValue = 1.0
+            f.toValue = 0.25
+            f.duration = 0.35
+            dot.add(s, forKey: "pulse")
+            dot.add(f, forKey: "fade")
+        }
+    }
     var progressBar = NSProgressIndicator()
     var timeLabel = NSTextField(labelWithString: "")
     var logView = NSTextView()
@@ -335,6 +371,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource 
         root.addArrangedSubview(dryRunBox)
         root.addArrangedSubview(audioBox)
 
+        // демо-режим: заголовок шага + пульс
+        let demoRow = NSStackView()
+        demoRow.spacing = 8
+        pulseDot = PulseDot(frame: NSRect(x: 0, y: 0, width: 28, height: 28))
+        pulseDot.translatesAutoresizingMaskIntoConstraints = false
+        pulseDot.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        pulseDot.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        demoRow.addArrangedSubview(pulseDot)
+        demoTitle.font = .systemFont(ofSize: 13, weight: .medium)
+        demoTitle.textColor = .secondaryLabelColor
+        demoRow.addArrangedSubview(demoTitle)
+        root.addArrangedSubview(demoRow)
+
         // кнопки
         let btns = NSStackView()
         btns.spacing = 8
@@ -344,10 +393,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource 
         stopBtn = NSButton(title: "■ Стоп", target: self, action: #selector(stop))
         stopBtn.isEnabled = false
         let test = NSButton(title: "Тест вибрации", target: self, action: #selector(testBuzz))
+        demoBtn = NSButton(title: "✨ Демо", target: self, action: #selector(demo))
         btns.addArrangedSubview(sel)
         btns.addArrangedSubview(playBtn)
         btns.addArrangedSubview(stopBtn)
         btns.addArrangedSubview(test)
+        btns.addArrangedSubview(demoBtn)
         root.addArrangedSubview(btns)
 
         // прогресс
@@ -581,6 +632,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource 
 
     // ----- игра очередью -----
     @objc func play() {
+        if isDemo { log("Дождись конца демо или жми ■ Стоп"); return }
         if playlist.isEmpty { log("Список пуст — перетащи файлы на окно"); return }
         stopRequested = false
         metroStop()
@@ -655,7 +707,156 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource 
         finishQueue("■ остановлено")
     }
 
-    @objc func testBuzz() { runEngine(["--list"], tag: "тест", chain: false, tool: enginePath()) }
+    @objc func testBuzz() {
+        if isDemo { return }
+        runEngine(["--list"], tag: "тест", chain: false, tool: enginePath())
+    }
+
+    // ----- демо-режим: все waveforms, громкость и маппинг по очереди -----
+
+    /// Крошечный демо-MIDI: 4 ноты мелодии + kick/hat/snare/hat на 10 канале.
+    func makeDemoMidi() -> String? {
+        let path = "/tmp/midihaptic_demo.mid"
+        var trk = Data()
+        func vlq(_ n: Int) {
+            var stack = [UInt8]()
+            var x = n
+            repeat {
+                stack.append(UInt8(x & 0x7F))
+                x >>= 7
+            } while x > 0
+            while stack.count > 1 {
+                trk.append(stack.removeLast() | 0x80)
+            }
+            trk.append(stack.removeLast())
+        }
+        func ev(_ delta: Int, _ b: UInt8...) {
+            vlq(delta)
+            trk.append(contentsOf: b)
+        }
+        ev(0, 0xFF, 0x51, 0x03, 0x07, 0xA1, 0x20) // 120 bpm
+        let mel = [(60, 90), (62, 70), (64, 110), (67, 100)]
+        for (i, (n, v)) in mel.enumerated() {
+            ev(i == 0 ? 0 : 240, 0x90, UInt8(n), UInt8(v))
+            ev(240, 0x80, UInt8(n), 0x40)
+        }
+        let drums = [(36, 120), (42, 60), (38, 110), (42, 60)]
+        for (n, v) in drums {
+            ev(240, 0x99, UInt8(n), UInt8(v))
+            ev(240, 0x89, UInt8(n), 0x40)
+        }
+        ev(0, 0xFF, 0x2F, 0x00)
+        var f = Data("MThd".utf8)
+        f.append(contentsOf: [0, 0, 0, 6, 0, 0, 0, 1, 0x01, 0xE0] as [UInt8])
+        f.append(contentsOf: Array("MTrk".utf8))
+        let len = trk.count
+        f.append(contentsOf: [UInt8((len >> 24) & 0xFF), UInt8((len >> 16) & 0xFF),
+                              UInt8((len >> 8) & 0xFF), UInt8(len & 0xFF)])
+        f.append(trk)
+        do {
+            try f.write(to: URL(fileURLWithPath: path))
+            return path
+        } catch {
+            log("Не смог записать демо-MIDI: \(error)")
+            return nil
+        }
+    }
+
+    /// Синхронный запуск движка для демо (вывод в лог, убивается кнопкой ■).
+    func runSync(tool: String, args: [String]) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: tool)
+        p.arguments = args
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = pipe
+        player = p
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] h in
+            let s = String(data: h.availableData, encoding: .utf8) ?? ""
+            if !s.isEmpty { DispatchQueue.main.async { self?.log(s, noprefix: true) } }
+        }
+        do {
+            try p.run()
+            p.waitUntilExit()
+        } catch {
+            log("ОШИБКА запуска: \(error)")
+        }
+        player = nil
+    }
+
+    @objc func demo() {
+        if player != nil || isDemo { return }
+        isDemo = true
+        stopRequested = false
+        metroStop()
+        playBtn.isEnabled = false
+        demoBtn.isEnabled = false
+        stopBtn.isEnabled = true
+        progressBar.isIndeterminate = true
+        progressBar.startAnimation(nil)
+        timeLabel.stringValue = "демо…"
+        DispatchQueue.global().async { [weak self] in self?.runDemo() }
+    }
+
+    func demoStep(_ title: String) -> Bool {
+        if stopRequested { return false }
+        DispatchQueue.main.async { [weak self] in
+            self?.demoTitle.stringValue = title
+            self?.demoTitle.textColor = .labelColor
+            self?.pulseDot.pulse()
+        }
+        return true
+    }
+
+    func runDemo() {
+        let eng = enginePath()
+        let total = 12
+        var i = 0
+        let waves = [1: "слабый клик", 2: "сильный клик", 3: "buzz",
+                     4: "лёгкий тап", 5: "средний тап", 6: "сильный тап"]
+        log("✨ демо: волны → громкость → маппинг (■ Стоп — прервать)")
+        for w in 1 ... 6 {
+            i += 1
+            if !demoStep("Шаг \(i)/\(total): волна \(w) — \(waves[w]!)") { break }
+            runSync(tool: eng, args: ["--wave", "\(w)", "--immediate"])
+            usleep(450000)
+        }
+        if let demo = stopRequested ? nil : makeDemoMidi() {
+            for (g, name) in [("0.30", "тихо"), ("1.00", "норма"), ("2.00", "громко")] {
+                i += 1
+                if !demoStep("Шаг \(i)/\(total): громкость — \(name)") { break }
+                DispatchQueue.main.sync { self.startAudio(demo) }
+                runSync(tool: eng, args: [demo, "-g", g, "--immediate"])
+                DispatchQueue.main.sync { self.stopAudio() }
+            }
+            for (m, name) in [("velocity", "по громкости"), ("pitch", "по высоте"),
+                              ("drums", "барабаны")] {
+                i += 1
+                if !demoStep("Шаг \(i)/\(total): маппинг — \(name)") { break }
+                DispatchQueue.main.sync { self.startAudio(demo) }
+                runSync(tool: eng, args: [demo, "-m", m, "--immediate"])
+                DispatchQueue.main.sync { self.stopAudio() }
+            }
+        }
+        let wasStopped = stopRequested
+        DispatchQueue.main.async {
+            self.isDemo = false
+            self.playBtn.isEnabled = true
+            self.demoBtn.isEnabled = true
+            self.stopBtn.isEnabled = false
+            self.progressBar.stopAnimation(nil)
+            self.progressBar.isIndeterminate = false
+            self.progressBar.doubleValue = 0
+            self.timeLabel.stringValue = ""
+            self.demoTitle.textColor = .secondaryLabelColor
+            if !wasStopped {
+                self.demoTitle.stringValue = "Демо готово ✅"
+                self.log("✨ демо завершено")
+            } else {
+                self.demoTitle.stringValue = "Демо остановлено"
+            }
+        }
+    }
 
     // ----- движок -----
     func runEngine(_ args: [String], tag: String, chain: Bool, tool: String,
@@ -835,6 +1036,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource 
     }
 
     func log(_ s: String, noprefix: Bool = false) {
+        // NSTextView трогаем только с main: с фона AppKit кидает исключение.
+        if Thread.isMainThread {
+            appendLog(s, noprefix: noprefix)
+        } else {
+            DispatchQueue.main.async { [weak self] in self?.appendLog(s, noprefix: noprefix) }
+        }
+    }
+    private func appendLog(_ s: String, noprefix: Bool) {
         let t = noprefix ? s : "• \(s)\n"
         logView.string += t.hasSuffix("\n") ? t : t + "\n"
         logView.scrollToEndOfDocument(nil)

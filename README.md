@@ -73,6 +73,9 @@ In the window:
   The shift applies live: hear the click, feel the buzz, turn “Sync” until they
   merge. The same shift is passed as `--offset-ms` to the engines for files
 - **Progress bar** with track time, mapping, channels, live engine log below
+- **✨ Demo**: walks through everything in sequence — all 6 waveforms,
+  volume (quiet/normal/loud) and mapping (velocity/pitch/drums) — with a
+  pulsing indicator and step title. Cancellable with ■ Stop
 
 Without the bundle it works too: `make MidiHapticApp && ./MidiHapticApp`
 (it looks for `midi_haptic` next to itself — keep them in one folder).
@@ -122,6 +125,7 @@ All options: `./midi_haptic --help`
 | `--offset-ms MS` | vibration shift vs sound, ms (−1000..1000) |
 | `--offset-file PATH` | live shift: re-read ms from a file before every note (the GUI writes the slider there) |
 | `--immediate` | no “starting in 1 sec” pause, READY marker for GUI-synced start |
+| `-w, --wave N` | single waveform hit 1..20 with no MIDI file (for demos) |
 | `--device-offset N` | device ID struct offset (default 64, auto-probed if wrong) |
 | `-c all\|1,10` | which MIDI channels to play (1–16) |
 | `--min-vel N` | drop quiet notes |
@@ -166,7 +170,8 @@ make typeclick
 
 **TypeBar.app** — the same typewriter as a menu-bar icon ⌨️: on/off toggle,
 per-group waveform + repeat count (bursts are unmistakable on any hardware),
-gap presets, pattern test. Shares `~/.typeclickrc` with the CLI version.
+gap presets, pattern test, **▶ mode demo** (all groups in sequence with a
+status line — easy to compare). Shares `~/.typeclickrc` with the CLI version.
 ```bash
 make typebar-app
 open TypeBar.app
