@@ -47,6 +47,7 @@ final class HIDKeys {
     init?() {
         let m = IOHIDManagerCreate(kCFAllocatorDefault,
                                    IOOptionBits(kIOHIDOptionsTypeNone))
+        // Фильтр нужен: без него CopyDevices отдаёт nil.
         let match: [String: Any] = [
             kIOHIDDeviceUsagePageKey as String: NSNumber(value: UInt32(0x01)),
             kIOHIDDeviceUsageKey as String: NSNumber(value: UInt32(0x06)),
@@ -60,17 +61,46 @@ final class HIDKeys {
         sharedHID = self
     }
 
+    private var devicesReady = false
+
     /// Открыть устройства. Возвращает true, если есть хоть одна клавиатура.
-    /// Важно: результат Open игнорируем — он часто отдаёт ExclusiveAccess
-    /// (клавиатуры уже держит Karabiner и т.п.), при этом перечисление
-    /// устройств и колбэки ввода продолжают работать.
+    /// Open менеджера часто отдаёт ExclusiveAccess (устройства держит
+    /// Karabiner) — игнорируем и цепляем колбэки напрямую к устройствам:
+    /// IOHIDDeviceOpen + RegisterInputValueCallback на каждое.
     func start() -> Bool {
         guard let m = mgr else { return false }
-        let r = IOHIDManagerOpen(m, IOOptionBits(kIOHIDOptionsTypeNone))
-        let raw = IOHIDManagerCopyDevices(m)
-        let n = (raw as NSSet?)?.count ?? -1
-        diag = String(format: "open=0x%x n=%d", UInt32(bitPattern: Int32(r)), n)
-        keyboardCount = max(0, n)
+        if !devicesReady {
+            devicesReady = true
+            let r = IOHIDManagerOpen(m, IOOptionBits(kIOHIDOptionsTypeNone))
+            var n = 0
+            var openOk = 0
+            if let raw = IOHIDManagerCopyDevices(m) {
+                let cf = raw as CFSet
+                let c = CFSetGetCount(cf)
+                if c > 0 {
+                    let vals = UnsafeMutablePointer<UnsafeRawPointer?>.allocate(capacity: c)
+                    defer { vals.deallocate() }
+                    CFSetGetValues(cf, vals)
+                    for i in 0 ..< c {
+                        guard let p = vals[i] else { continue }
+                        let dev = Unmanaged<IOHIDDevice>.fromOpaque(p).takeUnretainedValue()
+                        let pg = IOHIDDeviceGetProperty(dev, kIOHIDPrimaryUsagePageKey as CFString) as? Int
+                        let us = IOHIDDeviceGetProperty(dev, kIOHIDPrimaryUsageKey as CFString) as? Int
+                        guard pg == 0x01 && us == 0x06 else { continue }
+                        n += 1
+                        if IOHIDDeviceOpen(dev, IOOptionBits(kIOHIDOptionsTypeNone)) == kIOReturnSuccess {
+                            openOk += 1
+                            IOHIDDeviceRegisterInputValueCallback(dev, hidValueCallback, nil)
+                            IOHIDDeviceScheduleWithRunLoop(dev, CFRunLoopGetCurrent(),
+                                                           CFRunLoopMode.defaultMode.rawValue as CFString)
+                        }
+                    }
+                }
+            }
+            diag = String(format: "open=0x%x kb=%d devopen=%d",
+                          UInt32(bitPattern: Int32(r)), n, openOk)
+            keyboardCount = n
+        }
         return keyboardCount > 0
     }
 
@@ -115,8 +145,8 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
     var lastOutcome = ""
 
     /// Диагностика в файл (меню для этого слишком тесно).
-    func dlog(_ s: String) {
-        if s == lastOutcome { return }
+    func dlog(_ s: String, always: Bool = false) {
+        if !always && s == lastOutcome { return }
         lastOutcome = s
         let line = "\(s)\n"
         guard let d = line.data(using: .utf8) else { return }
@@ -299,10 +329,12 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
         let w = waves[g] ?? 4
         let r = reps[g] ?? 1
         DispatchQueue.global().async { [weak self] in
+            var ok = false
             for i in 0 ..< r {
                 if i > 0 { usleep(70000) }
-                self?.driver?.fire(Int32(w))
+                ok = self?.driver?.fire(Int32(w)) ?? false
             }
+            self?.dlog("fire \(g)=\(w)x\(r) ok=\(ok)", always: true)
         }
     }
 
@@ -360,7 +392,10 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
         // 2. фолбэк: HID-клавиатуры напрямую, доступ вообще не нужен
         if hid == nil {
             let h = HIDKeys()
-            h?.onUsage = { [weak self] u in self?.handleUsage(u) }
+            h?.onUsage = { [weak self] u in
+                self?.dlog(String(format: "key 0x%x", u), always: true)
+                self?.handleUsage(u)
+            }
             hid = h
         }
         if let h = hid, h.start(), h.keyboardCount > 0 {
