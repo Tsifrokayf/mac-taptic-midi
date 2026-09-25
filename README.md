@@ -160,6 +160,8 @@ patterns: letters = single light tap, space/tab = single medium,
 enter = DOUBLE strong click, backspace = weak, esc = buzz, modifiers silent.
 Tune each group: `--space/--tab/--enter/--delete/--esc/--key W or WxR`
 (feel them first with `--list`, check with `--probe-key 49`),
+tested on MacBook Air: only 1–6 actually thump (differing mostly in loudness),
+7+ are silent — so use repeats and buzz for contrast,
 repeat gap `--rep-gap 20..500`, master strength `--master 10..300`
 (wave ladder only, never touches group repeats),
 or write `~/.typeclickrc` (`enter=2x2`, `master=150` per line, reloaded live).
