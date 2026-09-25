@@ -12,7 +12,7 @@ final class HapticDriver {
     private typealias FnCreateAct = @convention(c) (UInt64) -> UnsafeRawPointer?
     private typealias FnOpen = @convention(c) (UnsafeRawPointer, UInt32) -> Int32
     private typealias FnClose = @convention(c) (UnsafeRawPointer) -> Int32
-    private typealias FnActuate = @convention(c) (UnsafeRawPointer, Int32, UInt32, UInt32, UInt32) -> Int32
+    private typealias FnActuate = @convention(c) (UnsafeRawPointer, Int32, Float, Float, UInt32) -> Int32
 
     private var fnCreateList: FnCreateList?
     private var fnCreateAct: FnCreateAct?
@@ -66,14 +66,15 @@ final class HapticDriver {
         return nil
     }
 
-    /// Один удар. Возвращает true, если актуатор принял команду.
+    /// Один удар. intensity 0.0–2.0 — настоящая амплитуда актуатора
+    /// (раскладка BluestoneInc: type, intensity, frequency, flags).
     @discardableResult
-    func fire(_ waveform: Int32) -> Bool {
+    func fire(_ waveform: Int32, intensity: Float = 1.0) -> Bool {
         guard deviceID >= 0 else { return false }
         guard let act = fnCreateAct!(UInt64(bitPattern: deviceID)) else { return false }
         let r: Int32
         if fnOpen!(act, 0) == 0 {
-            r = fnActuate!(act, waveform, 0, 0, 0)
+            r = fnActuate!(act, waveform, intensity, 0, 0)
         } else {
             r = -1
         }

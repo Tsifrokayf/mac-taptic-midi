@@ -47,7 +47,8 @@ typedef CFTypeRef (*MTActuatorCreateFromDeviceID_t)(uint64_t deviceID);
 typedef IOReturn  (*MTActuatorOpen_t)(CFTypeRef actuator, uint32_t options);
 typedef IOReturn  (*MTActuatorClose_t)(CFTypeRef actuator);
 typedef IOReturn  (*MTActuatorActuate_t)(CFTypeRef actuator, int32_t waveform,
-                                         uint32_t a1, uint32_t a2, uint32_t a3);
+                                         float intensity, float frequency,
+                                         uint32_t flags);
 typedef CFMutableArrayRef (*MTDeviceCreateList_t)(void);
 
 static MTActuatorCreateFromDeviceID_t pCreate;
@@ -120,11 +121,11 @@ static double now_sec(void) {
 
 typedef struct { int wave, rep; } Pat;
 
-static void fire_raw(int wave) {
+static void fire_raw(int wave, float intensity) {
     CFTypeRef act = pCreate((uint64_t)g_device);
     if (!act) return;
     if (pOpen(act, 0) == kIOReturnSuccess)
-        pActuate(act, wave, 0, 0, 0);
+        pActuate(act, wave, intensity, 0, 0);
     pClose(act);
     CFRelease(act);
 }
@@ -132,14 +133,14 @@ static void fire_raw(int wave) {
 /* Паттерн: rep ударов с паузой — на любом железе отличим от одиночки.
  * Пауза важна: слишком частые удары драйвер может сливать в один. */
 static int g_rep_gap_ms = 120;
-static void fire_pat(Pat p) {
+static void fire_pat(Pat p, float amp) {
     if (p.wave <= 0 || p.rep <= 0) return;
     double now = now_sec();
     if (now - g_last_fire < g_min_gap) return; // защита от пулемёта
     g_last_fire = now;
     for (int i = 0; i < p.rep; i++) {
         if (i > 0) usleep((useconds_t)g_rep_gap_ms * 1000);
-        fire_raw(p.wave);
+        fire_raw(p.wave, amp);
     }
 }
 
@@ -192,25 +193,13 @@ static int cli_repgap = 0; // пауза задана флагом — конф�
 static double g_master = 100.0; // мастер-сила 10..300 (общая с TypeBar)
 static int cli_master = 0;
 
-/* Мастер-сила: двигает волну по лесенке [1,4,5,2,6].
- * Повторы групп НЕ трогает (иначе всё сливается в тройные) —
- * лишь на самом верху (>=280) добавляет один удар. buzz(3) закреплён. */
-static const int ladder[] = {1, 4, 5, 2, 6};
-static Pat eff_pat(Pat base) {
-    if (base.wave <= 0 || base.rep <= 0) return base;
-    int shift = (int)((g_master - 100) / 66);
-    Pat out = base;
-    if (base.wave != 3) {
-        int idx = 1;
-        for (int i = 0; i < 5; i++)
-            if (ladder[i] == base.wave) { idx = i; break; }
-        idx += shift;
-        if (idx < 0) idx = 0;
-        if (idx > 4) idx = 4;
-        out.wave = ladder[idx];
-    }
-    if (g_master >= 280 && out.rep < 4) out.rep++;
-    return out;
+/* Мастер-сила 10..300% = амплитуда актуатора 0.1..2.0.
+ * Паттерны групп не трогает — только громкость. */
+static float master_amp(void) {
+    float a = (float)(g_master / 100.0);
+    if (a < 0.1f) a = 0.1f;
+    if (a > 2.0f) a = 2.0f;
+    return a;
 }
 
 /* Формат паттерна: "W" или "WxR", W=waveform 1..6, R=повторы 1..4. */
@@ -314,14 +303,15 @@ static CGEventRef key_callback(CGEventTapProxy proxy, CGEventType type,
     if (type != kCGEventKeyDown) return event;
     int code = (int)CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
     load_config(); // конфиг перечитывается наживую
-    Pat p = eff_pat(pat_for_key(code));
+    Pat p = pat_for_key(code);
+    float amp = master_amp();
     if (g_verbose) {
         if (p.rep > 1)
-            printf("key %d -> %dx%d (%s)\n", code, p.wave, p.rep, wave_name(p.wave));
+            printf("key %d -> %dx%d (%s) amp=%.2f\n", code, p.wave, p.rep, wave_name(p.wave), amp);
         else
-            printf("key %d -> wave %d (%s)\n", code, p.wave, wave_name(p.wave));
+            printf("key %d -> wave %d (%s) amp=%.2f\n", code, p.wave, wave_name(p.wave), amp);
     }
-    fire_pat(p);
+    fire_pat(p, amp);
     return event; // событие пропускаем дальше — печать не ломаем
 }
 
@@ -339,8 +329,8 @@ static void usage(const char *prog) {
         "                          36 ввод, 51 стереть, 53 esc) и выйти\n"
         "  --rep-gap MS            пауза между ударами паттерна, мс 20..500\n"
         "                          (по умолч. 120; если повторы сливаются — ставь больше)\n"
-        "  --master N              мастер-сила 10..300 (общая с TypeBar): только\n"
-        "                          волна по лесенке [1,4,5,2,6]; повторы групп не трогает\n"
+        "  --master N              мастер-сила 10..300 (общая с TypeBar): настоящая\n"
+        "                          амплитуда актуатора 0.1..2.0\n"
         "  --min-gap MS            минимум между щелчками, мс (по умолч. 15)\n"
         "  -v                      печатать каждый код клавиши\n"
         "  -d ID                   ID устройства вручную\n"
@@ -437,16 +427,14 @@ int main(int argc, char *argv[]) {
     load_config(); // стартовые значения из файла (флаги уже залочены выше)
 
     if (probe_key >= 0) { // устройство не нужно — только маппинг
-        Pat base = pat_for_key(probe_key);
-        Pat p = eff_pat(base);
-        if (base.wave != p.wave || base.rep != p.rep)
-            printf("key %d -> база %dx%d, eff %dx%d (%s) при master=%.0f\n",
-                   probe_key, base.wave, base.rep,
-                   p.wave, p.rep, wave_name(p.wave), g_master);
-        else if (p.rep > 1)
-            printf("key %d -> %dx%d (%s)\n", probe_key, p.wave, p.rep, wave_name(p.wave));
+        Pat p = pat_for_key(probe_key);
+        if (p.rep > 1)
+            printf("key %d -> %dx%d (%s), amp=%.2f при master=%.0f\n",
+                   probe_key, p.wave, p.rep, wave_name(p.wave),
+                   master_amp(), g_master);
         else
-            printf("key %d -> wave %d (%s)\n", probe_key, p.wave, wave_name(p.wave));
+            printf("key %d -> wave %d (%s), amp=%.2f при master=%.0f\n",
+                   probe_key, p.wave, wave_name(p.wave), master_amp(), g_master);
         return 0;
     }
 
@@ -465,7 +453,7 @@ int main(int argc, char *argv[]) {
             printf("  %d (%s)... ", w, wave_name(w));
             fflush(stdout);
             g_last_fire = -1;
-            fire_raw(w);
+            fire_raw(w, 1.0f);
             printf("ok\n");
             usleep(800000);
         }
@@ -475,7 +463,7 @@ int main(int argc, char *argv[]) {
         printf("wave %d (%s), палец на трекпаде!\n", test_wave, wave_name(test_wave));
         fflush(stdout);
         g_last_fire = -1;
-        fire_raw(test_wave);
+        fire_raw(test_wave, 1.0f);
         return 0;
     }
 

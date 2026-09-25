@@ -163,7 +163,7 @@ Tune each group: `--space/--tab/--enter/--delete/--esc/--key W or WxR`
 tested on MacBook Air: only 1–6 actually thump (differing mostly in loudness),
 7+ are silent — so use repeats and buzz for contrast,
 repeat gap `--rep-gap 20..500`, master strength `--master 10..300`
-(wave ladder only, never touches group repeats),
+(real actuator amplitude 0.1..2.0 — the “Strength” slider in the window),
 or write `~/.typeclickrc` (`enter=2x2`, `master=150` per line, reloaded live).
 Needs Input Monitoring permission: System Settings →
 Privacy → Input Monitoring → add `typeclick`.

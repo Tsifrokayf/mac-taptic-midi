@@ -396,18 +396,19 @@ final class TypeBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         burst(group: g) // послушать
     }
 
-    /// Паттерн: rep ударов с паузой — отличим на любом железе.
-    /// Волна и повторы идут через мастер-силу eff().
+    /// Паттерн группы как настроен; громкость — мастер-слайдер (амплитуда).
     func burst(group g: String) {
-        let (w, r) = eff(g)
+        let w = waves[g] ?? 4
+        let r = reps[g] ?? 1
         let gap = UInt32(repGapMs * 1000)
+        let amp = masterAmp
         DispatchQueue.global().async { [weak self] in
             var ok = false
             for i in 0 ..< r {
                 if i > 0 { usleep(gap) }
-                ok = self?.driver?.fire(Int32(w)) ?? false
+                ok = self?.driver?.fire(Int32(w), intensity: amp) ?? false
             }
-            self?.dlog("fire \(g)=\(w)x\(r) ok=\(ok)", always: true)
+            self?.dlog("fire \(g)=\(w)x\(r) amp=\(amp) ok=\(ok)", always: true)
         }
     }
 
@@ -423,26 +424,10 @@ final class TypeBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         driver?.fire(Int32(sender.tag))
     }
 
-    // ----- мастер-сила 10..300: только волна по лесенке -----
+    // ----- мастер-сила 10..300% = амплитуда 0.1..2.0 -----
 
-    /// Лесенка интенсивности; buzz(3) закреплён.
-    /// Повторы групп мастер НЕ трогает (иначе всё сливается в тройные) —
-    /// лишь на самом верху (>=280) добавляет один удар для максимума.
-    static let ladder = [1, 4, 5, 2, 6]
-
-    /// Эффективный паттерн группы с учётом мастера.
-    func eff(_ g: String) -> (w: Int, r: Int) {
-        let baseW = waves[g] ?? 4
-        var baseR = reps[g] ?? 1
-        var w = baseW
-        if baseW != 3 {
-            let shift = Int((master - 100) / 66)
-            let idx = Self.ladder.firstIndex(of: baseW) ?? 1
-            w = Self.ladder[min(max(idx + shift, 0), Self.ladder.count - 1)]
-        }
-        if master >= 280 { baseR = min(4, baseR + 1) }
-        return (w, baseR)
-    }
+    /// Мастер-слайдер напрямую в амплитуду актуатора.
+    var masterAmp: Float { min(max(Float(master) / 100, 0.1), 2.0) }
 
     @objc func strengthChanged(_ sender: NSSlider) {
         master = sender.doubleValue
@@ -456,15 +441,17 @@ final class TypeBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /// Превью мастера: эффективный паттерн группы «Буквы».
+    /// Превью мастера: паттерн группы «Буквы» с текущей громкостью.
     func previewMaster() {
         ensureDriver()
-        let (w, r) = eff("key")
+        let w = waves["key"] ?? 4
+        let r = reps["key"] ?? 1
         let gap = UInt32(repGapMs * 1000)
+        let amp = masterAmp
         DispatchQueue.global().async { [weak self] in
             for i in 0 ..< r {
                 if i > 0 { usleep(gap) }
-                _ = self?.driver?.fire(Int32(w))
+                _ = self?.driver?.fire(Int32(w), intensity: amp)
             }
         }
     }
