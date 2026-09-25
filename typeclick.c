@@ -460,16 +460,14 @@ int main(int argc, char *argv[]) {
     }
 
     if (list_mode) {
-        printf("Waveform 1..6, 15, 16 (палец на трекпаде!):\n");
-        int ids[] = {1, 2, 3, 4, 5, 6, 15, 16};
-        for (int i = 0; i < 8; i++) {
-            int w = ids[i];
+        printf("Waveform 1..20 (палец на трекпаде!), пауза 0.8с:\n");
+        for (int w = 1; w <= 20; w++) {
             printf("  %d (%s)... ", w, wave_name(w));
             fflush(stdout);
             g_last_fire = -1;
             fire_raw(w);
             printf("ok\n");
-            usleep(600000);
+            usleep(800000);
         }
         return 0;
     }
