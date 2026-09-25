@@ -189,6 +189,29 @@ static time_t g_cfg_mtime = 0;
 static long g_cfg_mtime_ns = 0;
 static int g_cfg_have = 0;
 static int cli_repgap = 0; // пауза задана флагом — конфиг её не трогает
+static double g_master = 100.0; // мастер-сила 10..300 (общая с TypeBar)
+static int cli_master = 0;
+
+/* Мастер-сила: двигает волну по лесенке [1,4,5,2,6].
+ * Повторы групп НЕ трогает (иначе всё сливается в тройные) —
+ * лишь на самом верху (>=280) добавляет один удар. buzz(3) закреплён. */
+static const int ladder[] = {1, 4, 5, 2, 6};
+static Pat eff_pat(Pat base) {
+    if (base.wave <= 0 || base.rep <= 0) return base;
+    int shift = (int)((g_master - 100) / 66);
+    Pat out = base;
+    if (base.wave != 3) {
+        int idx = 1;
+        for (int i = 0; i < 5; i++)
+            if (ladder[i] == base.wave) { idx = i; break; }
+        idx += shift;
+        if (idx < 0) idx = 0;
+        if (idx > 4) idx = 4;
+        out.wave = ladder[idx];
+    }
+    if (g_master >= 280 && out.rep < 4) out.rep++;
+    return out;
+}
 
 /* Формат паттерна: "W" или "WxR", W=waveform 1..6, R=повторы 1..4. */
 static int parse_pat(const char *v, Pat *out) {
@@ -250,6 +273,14 @@ static void load_config(void) {
             }
             continue;
         }
+        if (!strcmp(k, "master")) { // мастер-сила 10..300
+            if (!cli_master) {
+                double n = atof(v);
+                if (n >= 10 && n <= 300) g_master = n;
+                else fprintf(stderr, "warn: config: 'master' ждёт 10..300\n");
+            }
+            continue;
+        }
         Pat *dst = NULL;
         int locked = 0;
         if (!strcmp(k, "space")) { dst = &p_space; locked = cli_locked[0]; }
@@ -283,7 +314,7 @@ static CGEventRef key_callback(CGEventTapProxy proxy, CGEventType type,
     if (type != kCGEventKeyDown) return event;
     int code = (int)CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
     load_config(); // конфиг перечитывается наживую
-    Pat p = pat_for_key(code);
+    Pat p = eff_pat(pat_for_key(code));
     if (g_verbose) {
         if (p.rep > 1)
             printf("key %d -> %dx%d (%s)\n", code, p.wave, p.rep, wave_name(p.wave));
@@ -308,6 +339,8 @@ static void usage(const char *prog) {
         "                          36 ввод, 51 стереть, 53 esc) и выйти\n"
         "  --rep-gap MS            пауза между ударами паттерна, мс 20..500\n"
         "                          (по умолч. 120; если повторы сливаются — ставь больше)\n"
+        "  --master N              мастер-сила 10..300 (общая с TypeBar): только\n"
+        "                          волна по лесенке [1,4,5,2,6]; повторы групп не трогает\n"
         "  --min-gap MS            минимум между щелчками, мс (по умолч. 15)\n"
         "  -v                      печатать каждый код клавиши\n"
         "  -d ID                   ID устройства вручную\n"
@@ -333,6 +366,7 @@ int main(int argc, char *argv[]) {
         {"test-wave", required_argument, 0, 1011},
         {"probe-key", required_argument, 0, 1012},
         {"rep-gap", required_argument, 0, 1013},
+        {"master", required_argument, 0, 1014},
         {0, 0, 0, 0}
     };
     int opt;
@@ -377,6 +411,13 @@ int main(int argc, char *argv[]) {
             cli_repgap = 1;
             break;
         }
+        case 1014: {
+            double v = atof(optarg);
+            if (v < 10 || v > 300) { fprintf(stderr, "error: --master 10..300\n"); return 1; }
+            g_master = v;
+            cli_master = 1;
+            break;
+        }
         case 'v': g_verbose = 1; break;
         case 'd': g_device = atoll(optarg); break;
         case 'h': usage(argv[0]); return 0;
@@ -396,8 +437,13 @@ int main(int argc, char *argv[]) {
     load_config(); // стартовые значения из файла (флаги уже залочены выше)
 
     if (probe_key >= 0) { // устройство не нужно — только маппинг
-        Pat p = pat_for_key(probe_key);
-        if (p.rep > 1)
+        Pat base = pat_for_key(probe_key);
+        Pat p = eff_pat(base);
+        if (base.wave != p.wave || base.rep != p.rep)
+            printf("key %d -> база %dx%d, eff %dx%d (%s) при master=%.0f\n",
+                   probe_key, base.wave, base.rep,
+                   p.wave, p.rep, wave_name(p.wave), g_master);
+        else if (p.rep > 1)
             printf("key %d -> %dx%d (%s)\n", probe_key, p.wave, p.rep, wave_name(p.wave));
         else
             printf("key %d -> wave %d (%s)\n", probe_key, p.wave, wave_name(p.wave));

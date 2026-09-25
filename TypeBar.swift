@@ -105,9 +105,10 @@ final class HIDKeys {
         return keyboardCount > 0
     }
 
-    // Два стиля отчётов (видно в живом логе: за настоящим usage идёт 0xffffffff):
+    // Два стиля отчётов:
     //  - per-key: usage клавиши в ЭЛЕМЕНТЕ, значение 0/1;
-    //  - массив: в элементе мусор (0/0xFFFFFFFF), сам usage в ЗНАЧЕНИИ,
+    //  - массив: в элементе мусор (0/0xFFFFFFFF), а в ЗНАЧЕНИИ упакованы
+    //    сразу два usage (hi16|lo16 — видно в живом логе: 0x190009 и т.п.),
     //    0 = слот освободился (какая именно клавиша ушла — неизвестно).
     fileprivate func handleValue(sender: UnsafeMutableRawPointer?, value: IOHIDValue) {
         let el = IOHIDValueGetElement(value)
@@ -123,10 +124,14 @@ final class HIDKeys {
                 // слот освободился — чистим залипшее этого устройства
                 pressed = pressed.filter { $0.key.d != dev }
             } else {
-                let k = DK(d: dev, u: UInt32(iv))
-                if pressed[k] == nil {
-                    pressed[k] = now
-                    onUsage?(UInt32(iv))
+                // в значении до двух usages: hi16 и lo16
+                let halves = [UInt32(iv & 0xFFFF), UInt32((iv >> 16) & 0xFFFF)]
+                for u in halves where u >= 1 && u <= 0xE7 {
+                    let k = DK(d: dev, u: u)
+                    if pressed[k] == nil {
+                        pressed[k] = now
+                        onUsage?(u)
+                    }
                 }
             }
         } else {
@@ -145,7 +150,7 @@ final class HIDKeys {
     }
 }
 
-final class TypeBarApp: NSObject, NSApplicationDelegate {
+final class TypeBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     static var shared: TypeBarApp?
 
     // группа -> waveform 1..6
@@ -158,6 +163,11 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
                      "лёгкий тап", "средний тап", "сильный тап"]
     var minGapMs = 15.0
     var repGapMs = 120.0 // пауза между ударами паттерна (общая с CLI: repgap=)
+    var master = 100.0 // мастер-сила 10..300: лесенка волн + повторы
+    var strengthSlider: NSSlider!
+    var strengthLabel: NSTextField!
+    var lastPreview = -1.0
+    var lastHover = -1.0
     var reps = ["key": 1, "space": 1, "tab": 1, "enter": 2, "delete": 1, "esc": 1]
     var enabled = false
     var wantOn = true // хочет ли пользователь включённый режим
@@ -281,6 +291,24 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
         gapItem.submenu = gapSub
         m.addItem(gapItem)
 
+        // Мастер-сила 10..300 широким ползунком + живое превью при движении.
+        let stItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        let sview = NSView(frame: NSRect(x: 0, y: 0, width: 230, height: 52))
+        strengthLabel = NSTextField(labelWithString: "Сила: \(Int(master))%")
+        strengthLabel.font = .systemFont(ofSize: 12)
+        strengthLabel.frame = NSRect(x: 14, y: 30, width: 120, height: 16)
+        strengthLabel.isEditable = false
+        strengthLabel.isBordered = false
+        strengthLabel.backgroundColor = .clear
+        strengthSlider = NSSlider(value: master, minValue: 10, maxValue: 300,
+                                  target: self, action: #selector(strengthChanged(_:)))
+        strengthSlider.frame = NSRect(x: 12, y: 6, width: 206, height: 20)
+        strengthSlider.isContinuous = true
+        sview.addSubview(strengthLabel)
+        sview.addSubview(strengthSlider)
+        stItem.view = sview
+        m.addItem(stItem)
+
         let testSub = NSMenu()
         for w in 1 ... 6 {
             let it = NSMenuItem(title: "\(w) — \(waveNames[w])",
@@ -306,6 +334,9 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
         let quit = NSMenuItem(title: "Выйти", action: #selector(NSApp.terminate),
                               keyEquivalent: "q")
         m.addItem(quit)
+        for item in m.items {
+            item.submenu?.delegate = self
+        }
         return m
     }
 
@@ -323,6 +354,8 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
         for it in gapItems {
             it.state = ((it.representedObject as? Int) == Int(minGapMs)) ? .on : .off
         }
+        strengthSlider.doubleValue = master
+        strengthLabel.stringValue = "Сила: \(Int(master))%"
         for (id, items) in repMenus {
             let cur = reps[id] ?? 1
             for it in items {
@@ -363,10 +396,10 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
         burst(group: g) // послушать
     }
 
-    /// Паттерн: rep ударов с паузой 70 мс — отличим на любом железе.
+    /// Паттерн: rep ударов с паузой — отличим на любом железе.
+    /// Волна и повторы идут через мастер-силу eff().
     func burst(group g: String) {
-        let w = waves[g] ?? 4
-        let r = reps[g] ?? 1
+        let (w, r) = eff(g)
         let gap = UInt32(repGapMs * 1000)
         DispatchQueue.global().async { [weak self] in
             var ok = false
@@ -388,6 +421,70 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
     @objc func testWave(_ sender: NSMenuItem) {
         ensureDriver()
         driver?.fire(Int32(sender.tag))
+    }
+
+    // ----- мастер-сила 10..300: только волна по лесенке -----
+
+    /// Лесенка интенсивности; buzz(3) закреплён.
+    /// Повторы групп мастер НЕ трогает (иначе всё сливается в тройные) —
+    /// лишь на самом верху (>=280) добавляет один удар для максимума.
+    static let ladder = [1, 4, 5, 2, 6]
+
+    /// Эффективный паттерн группы с учётом мастера.
+    func eff(_ g: String) -> (w: Int, r: Int) {
+        let baseW = waves[g] ?? 4
+        var baseR = reps[g] ?? 1
+        var w = baseW
+        if baseW != 3 {
+            let shift = Int((master - 100) / 66)
+            let idx = Self.ladder.firstIndex(of: baseW) ?? 1
+            w = Self.ladder[min(max(idx + shift, 0), Self.ladder.count - 1)]
+        }
+        if master >= 280 { baseR = min(4, baseR + 1) }
+        return (w, baseR)
+    }
+
+    @objc func strengthChanged(_ sender: NSSlider) {
+        master = sender.doubleValue
+        strengthLabel.stringValue = "Сила: \(Int(master))%"
+        saveCfg()
+        // живое превью прямо во время движения (троттлинг 150 мс)
+        let now = mono()
+        if now - lastPreview > 0.15 {
+            lastPreview = now
+            previewMaster()
+        }
+    }
+
+    /// Превью мастера: эффективный паттерн группы «Буквы».
+    func previewMaster() {
+        ensureDriver()
+        let (w, r) = eff("key")
+        let gap = UInt32(repGapMs * 1000)
+        DispatchQueue.global().async { [weak self] in
+            for i in 0 ..< r {
+                if i > 0 { usleep(gap) }
+                _ = self?.driver?.fire(Int32(w))
+            }
+        }
+    }
+
+    // Превью вибрации при наведении на эффект (и в группах, и в проверке).
+    func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
+        guard let it = item else { return }
+        var w: Int?
+        if let d = it.representedObject as? NSDictionary,
+           let ww = d["wave"] as? Int {
+            w = ww
+        } else if it.action == #selector(testWave(_:)) {
+            w = it.tag
+        }
+        guard let wave = w, (1 ... 6).contains(wave) else { return }
+        let now = mono()
+        guard now - lastHover > 0.25 else { return }
+        lastHover = now
+        ensureDriver()
+        driver?.fire(Int32(wave))
     }
 
     // ----- демо: все группы по очереди, чтобы сравнить режимы -----
@@ -418,13 +515,25 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
     }
 
     func runDemo() {
-        // Демо эффектов: волны 1–6 по очереди одиночными ударами,
-        // чтобы сравнить сами эффекты (не группы клавиш).
-        for w in 1 ... 6 {
+        // Демо различимого: одиночки 1/2/4/5/6 на этом железе сливаются,
+        // поэтому идём по контрастным паттернам.
+        let steps: [(String, [Int])] = [
+            ("Одиночный", [4]),
+            ("Двойной", [5, 5]),
+            ("Тройной", [6, 6, 6]),
+            ("Buzz", [3]),
+            ("Мощный", [2, 6]),
+        ]
+        let gap = UInt32(repGapMs * 1000)
+        for (i, s) in steps.enumerated() {
             if stopDemoFlag { break }
-            demoSay("▶ [\(w)/6] \(waveNames[w])")
-            if !stopDemoFlag { _ = driver?.fire(Int32(w)) }
-            for _ in 0 ..< 12 {
+            demoSay("▶ [\(i + 1)/\(steps.count)] \(s.0)")
+            for (j, w) in s.1.enumerated() {
+                if stopDemoFlag { break }
+                if j > 0 { usleep(gap) }
+                _ = driver?.fire(Int32(w))
+            }
+            for _ in 0 ..< 14 {
                 if stopDemoFlag { break }
                 usleep(100000)
             }
@@ -566,6 +675,12 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
                 $0.trimmingCharacters(in: .whitespaces)
             }
             guard kv.count == 2 else { continue }
+            if kv[0] == "master" {
+                if let n = Double(kv[1]), (10 ... 300).contains(n) {
+                    master = n
+                }
+                continue
+            }
             if kv[0] == "repgap" {
                 if let n = Int(kv[1]), (20 ... 500).contains(n) { repGapMs = Double(n) }
                 continue
@@ -592,7 +707,7 @@ final class TypeBarApp: NSObject, NSApplicationDelegate {
             let w = waves[g] ?? 4
             let r = reps[g] ?? 1
             return r == 1 ? "\(g)=\(w)" : "\(g)=\(w)x\(r)"
-        }.joined(separator: "\n") + "\nrepgap=\(Int(repGapMs))\n"
+        }.joined(separator: "\n") + "\nrepgap=\(Int(repGapMs))\nmaster=\(Int(master))\n"
         try? s.write(to: cfgURL, atomically: true, encoding: .utf8)
     }
 

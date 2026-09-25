@@ -160,7 +160,9 @@ patterns: letters = single light tap, space/tab = single medium,
 enter = DOUBLE strong click, backspace = weak, esc = buzz, modifiers silent.
 Tune each group: `--space/--tab/--enter/--delete/--esc/--key W or WxR`
 (feel them first with `--list`, check with `--probe-key 49`),
-or write `~/.typeclickrc` (`enter=2x2` per line, reloaded live).
+repeat gap `--rep-gap 20..500`, master strength `--master 10..300`
+(wave ladder only, never touches group repeats),
+or write `~/.typeclickrc` (`enter=2x2`, `master=150` per line, reloaded live).
 Needs Input Monitoring permission: System Settings →
 Privacy → Input Monitoring → add `typeclick`.
 ```bash
@@ -170,8 +172,10 @@ make typeclick
 
 **TypeBar.app** — the same typewriter as a menu-bar icon ⌨️: on/off toggle,
 per-group waveform + repeat count (bursts are unmistakable on any hardware),
-gap presets, pattern test, **▶ mode demo** (effects 1–6 in sequence with
-a status line — easy to compare). Shares `~/.typeclickrc` with the CLI version.
+gap presets, wide 10–300 master-strength slider with live preview while
+dragging, vibration preview on effect hover, pattern test,
+**▶ demo** (single/double/triple/buzz/power in sequence with labels).
+Shares `~/.typeclickrc` with the CLI version.
 ```bash
 make typebar-app
 open TypeBar.app
