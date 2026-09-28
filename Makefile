@@ -79,7 +79,7 @@ MidiHaptic-intel.dmg: app-intel
 	rm -rf /tmp/dmgroot-intel
 
 clean:
-	rm -rf midi_haptic audio_haptic typeclick TypeBar MidiHapticApp $(APP) MidiHapticApp.iconset build-intel MidiHaptic-arm64.dmg MidiHaptic-intel.dmg MidiHaptic.dmg RhythmGame RhythmGame.app $(TYPEBAR_APP)
+	rm -rf midi_haptic audio_haptic typeclick TypeBar MidiHapticApp $(APP) MidiHapticApp.iconset build-intel MidiHaptic-arm64.dmg MidiHaptic-intel.dmg MidiHaptic.dmg TypeBar.dmg RhythmGame RhythmGame.app $(TYPEBAR_APP)
 
 .PHONY: all clean intel app-intel
 
@@ -102,6 +102,15 @@ typebar-app: TypeBar
 	iconutil -c icns MidiHapticApp.iconset -o $(TYPEBAR_APP)/Contents/Resources/AppIcon.icns
 	rm -rf MidiHapticApp.iconset
 	@echo "Готово: $(TYPEBAR_APP) — иконка ⌨️ в верхней панели"
+
+TypeBar.dmg: typebar-app
+	rm -rf /tmp/dmgroot-typebar $@
+	mkdir -p /tmp/dmgroot-typebar
+	cp -R $(TYPEBAR_APP) /tmp/dmgroot-typebar/
+	ln -s /Applications /tmp/dmgroot-typebar/Applications
+	hdiutil create -volname "TypeBar" -srcfolder /tmp/dmgroot-typebar -ov -format UDZO -o $@
+	rm -rf /tmp/dmgroot-typebar
+	@echo "Готово: TypeBar.dmg — скинь на другой мак и открой"
 
 # --- Ритм-игра на трекпаде ---
 RhythmGame: RhythmGame.swift HapticDriver.swift game-main.swift

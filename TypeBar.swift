@@ -163,7 +163,7 @@ final class TypeBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                      "лёгкий тап", "средний тап", "сильный тап"]
     var minGapMs = 15.0
     var repGapMs = 120.0 // пауза между ударами паттерна (общая с CLI: repgap=)
-    var master = 100.0 // мастер-сила 10..300: лесенка волн + повторы
+    var master = 500.0 // мастер-сила 10..500: амплитуда 0.1..5.0
     var strengthSlider: NSSlider!
     var strengthLabel: NSTextField!
     var lastPreview = -1.0
@@ -367,6 +367,12 @@ final class TypeBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                    keyEquivalent: "")
         autoStartItem.target = self
         m.addItem(autoStartItem)
+
+        let helpItem = NSMenuItem(title: "Показать подсказку заново",
+                                  action: #selector(showTipAgain),
+                                  keyEquivalent: "")
+        helpItem.target = self
+        m.addItem(helpItem)
 
         let quit = NSMenuItem(title: "Выйти", action: #selector(NSApp.terminate),
                               keyEquivalent: "q")
@@ -753,6 +759,10 @@ final class TypeBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func toggleAutoStart() {
         setAutoStart(!isAutoStartEnabled)
         refreshStates()
+    }
+
+    @objc func showTipAgain() {
+        firstRunNotice()
     }
 
     /// Ставит/снимает LaunchAgent: TypeBar грузится при входе в систему.
