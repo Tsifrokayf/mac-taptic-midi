@@ -175,6 +175,7 @@ final class TypeBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var item: NSStatusItem!
     var toggleItem: NSMenuItem!
     var sourceItem: NSMenuItem!
+    var autoStartItem: NSMenuItem!
     var groupMenus = [String: [NSMenuItem]]()
     var repMenus = [String: [NSMenuItem]]()
     var gapItems = [NSMenuItem]()
@@ -222,6 +223,36 @@ final class TypeBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if self.wantOn && !self.enabled {
                 self.startTap(showAlert: false)
                 self.refreshStates()
+            }
+        }
+        if !UserDefaults.standard.bool(forKey: "typebar.onboarded") {
+            UserDefaults.standard.set(true, forKey: "typebar.onboarded")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                self?.firstRunNotice()
+            }
+        }
+    }
+
+    /// Подсказка при первом запуске: как дать доступ «Мониторинг ввода».
+    /// Работает и без него (через HID), но тап точнее — предупреждаем один раз.
+    func firstRunNotice() {
+        let a = NSAlert()
+        a.messageText = "Добро пожаловать в печатную машинку ⌨️"
+        a.informativeText = """
+        Щелчки Taptic Engine на каждое нажатие клавиши.
+
+        Чтобы клавиши ловились точнее, добавь TypeBar в список:
+        Системные настройки → Конфиденциальность и безопасность → Мониторинг ввода → + → TypeBar.
+
+        Без доступа тоже работает (через HID-клавиатуры), но с ним отзывчивее.
+        В меню ⌨️ можно настроить: громкость, паттерны, демо, автозапуск.
+        """
+        a.addButton(withTitle: "Понятно")
+        a.addButton(withTitle: "Открыть настройки")
+        let r = a.runModal()
+        if r == .alertSecondButtonReturn {
+            if let u = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") {
+                NSWorkspace.shared.open(u)
             }
         }
     }
@@ -300,7 +331,7 @@ final class TypeBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         strengthLabel.isEditable = false
         strengthLabel.isBordered = false
         strengthLabel.backgroundColor = .clear
-        strengthSlider = NSSlider(value: master, minValue: 10, maxValue: 300,
+        strengthSlider = NSSlider(value: master, minValue: 10, maxValue: 500,
                                   target: self, action: #selector(strengthChanged(_:)))
         strengthSlider.frame = NSRect(x: 12, y: 6, width: 206, height: 20)
         strengthSlider.isContinuous = true
@@ -331,6 +362,12 @@ final class TypeBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         m.addItem(demoStatusItem)
 
         m.addItem(.separator())
+        autoStartItem = NSMenuItem(title: "Автозапуск при входе",
+                                   action: #selector(toggleAutoStart),
+                                   keyEquivalent: "")
+        autoStartItem.target = self
+        m.addItem(autoStartItem)
+
         let quit = NSMenuItem(title: "Выйти", action: #selector(NSApp.terminate),
                               keyEquivalent: "q")
         m.addItem(quit)
@@ -356,6 +393,7 @@ final class TypeBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         strengthSlider.doubleValue = master
         strengthLabel.stringValue = "Сила: \(Int(master))%"
+        autoStartItem.state = isAutoStartEnabled ? .on : .off
         for (id, items) in repMenus {
             let cur = reps[id] ?? 1
             for it in items {
@@ -427,7 +465,8 @@ final class TypeBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // ----- мастер-сила 10..300% = амплитуда 0.1..2.0 -----
 
     /// Мастер-слайдер напрямую в амплитуду актуатора.
-    var masterAmp: Float { min(max(Float(master) / 100, 0.1), 2.0) }
+    /// API принимает и больше 2.0 — драйвер сам клампит, так что даём запас.
+    var masterAmp: Float { min(max(Float(master) / 100, 0.1), 5.0) }
 
     @objc func strengthChanged(_ sender: NSSlider) {
         master = sender.doubleValue
@@ -663,7 +702,7 @@ final class TypeBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             guard kv.count == 2 else { continue }
             if kv[0] == "master" {
-                if let n = Double(kv[1]), (10 ... 300).contains(n) {
+                if let n = Double(kv[1]), (10 ... 500).contains(n) {
                     master = n
                 }
                 continue
@@ -696,6 +735,62 @@ final class TypeBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return r == 1 ? "\(g)=\(w)" : "\(g)=\(w)x\(r)"
         }.joined(separator: "\n") + "\nrepgap=\(Int(repGapMs))\nmaster=\(Int(master))\n"
         try? s.write(to: cfgURL, atomically: true, encoding: .utf8)
+    }
+
+    // ----- автозапуск через LaunchAgent -----
+
+    private static let agentLabel = "local.midihaptic.typebar"
+
+    private var agentPlistURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents/\(Self.agentLabel).plist")
+    }
+
+    private var isAutoStartEnabled: Bool {
+        FileManager.default.fileExists(atPath: agentPlistURL.path)
+    }
+
+    @objc func toggleAutoStart() {
+        setAutoStart(!isAutoStartEnabled)
+        refreshStates()
+    }
+
+    /// Ставит/снимает LaunchAgent: TypeBar грузится при входе в систему.
+    func setAutoStart(_ on: Bool) {
+        if on {
+            let exe = Bundle.main.executableURL?.path ?? ""
+            guard !exe.isEmpty else { return }
+            let dir = agentPlistURL.deletingLastPathComponent()
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let plist = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0">
+            <dict>
+                <key>Label</key><string>\(Self.agentLabel)</string>
+                <key>ProgramArguments</key>
+                <array><string>\(exe)</string></array>
+                <key>RunAtLoad</key><true/>
+                <key>KeepAlive</key><true/>
+                <key>ProcessType</key><string>Interactive</string>
+            </dict>
+            </plist>
+            """
+            try? plist.write(to: agentPlistURL, atomically: true, encoding: .utf8)
+            // подхватить без перезагрузки
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            task.arguments = ["load", agentPlistURL.path]
+            try? task.run()
+            task.waitUntilExit()
+        } else {
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            task.arguments = ["unload", agentPlistURL.path]
+            try? task.run()
+            task.waitUntilExit()
+            try? FileManager.default.removeItem(at: agentPlistURL)
+        }
     }
 
     func alert(_ title: String, _ text: String) {

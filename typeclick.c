@@ -198,7 +198,7 @@ static int cli_master = 0;
 static float master_amp(void) {
     float a = (float)(g_master / 100.0);
     if (a < 0.1f) a = 0.1f;
-    if (a > 2.0f) a = 2.0f;
+    if (a > 5.0f) a = 5.0f;
     return a;
 }
 
@@ -265,8 +265,8 @@ static void load_config(void) {
         if (!strcmp(k, "master")) { // мастер-сила 10..300
             if (!cli_master) {
                 double n = atof(v);
-                if (n >= 10 && n <= 300) g_master = n;
-                else fprintf(stderr, "warn: config: 'master' ждёт 10..300\n");
+                if (n >= 10 && n <= 500) g_master = n;
+                else fprintf(stderr, "warn: config: 'master' ждёт 10..500\n");
             }
             continue;
         }
@@ -329,8 +329,8 @@ static void usage(const char *prog) {
         "                          36 ввод, 51 стереть, 53 esc) и выйти\n"
         "  --rep-gap MS            пауза между ударами паттерна, мс 20..500\n"
         "                          (по умолч. 120; если повторы сливаются — ставь больше)\n"
-        "  --master N              мастер-сила 10..300 (общая с TypeBar): настоящая\n"
-        "                          амплитуда актуатора 0.1..2.0\n"
+        "  --master N              мастер-сила 10..500 (общая с TypeBar): настоящая\n"
+        "                          амплитуда актуатора; драйвер клампит сам\n"
         "  --min-gap MS            минимум между щелчками, мс (по умолч. 15)\n"
         "  -v                      печатать каждый код клавиши\n"
         "  -d ID                   ID устройства вручную\n"
@@ -403,7 +403,7 @@ int main(int argc, char *argv[]) {
         }
         case 1014: {
             double v = atof(optarg);
-            if (v < 10 || v > 300) { fprintf(stderr, "error: --master 10..300\n"); return 1; }
+            if (v < 10 || v > 500) { fprintf(stderr, "error: --master 10..500\n"); return 1; }
             g_master = v;
             cli_master = 1;
             break;
