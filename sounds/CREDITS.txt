@@ -1,0 +1,18 @@
+Звуки щелчков клавиши для TypeBar
+=================================
+
+Файлы взяты из репозитория https://github.com/lifepillar/typewriter-sounds
+(собранные звуки печатных машин из разных источников) и используются
+по лицензии MIT исходных проектов:
+
+  key004.wav — щелчок   : daktilo (https://github.com/orhun/daktilo), MIT
+  key010.wav — машинка  : vim-keysound (https://github.com/skywind3000/vim-keysound),
+                          ветка typewriter/keyany.wav, MIT
+  key001.wav — клик     : typewriter.vim (https://github.com/AndrewRadev/typewriter.vim),
+                          click1.wav, MIT
+  key009.wav — тихий    : vim-keysound, default/keyany.wav, MIT
+  return005.wav — возврат каретки (клавиша ввода):
+                          vim-keysound, typewriter/keyenter.wav, MIT
+
+MIT: можно использовать, копировать, изменять и распространять с сохранением
+уведомления об авторских правах (это файл и есть такое уведомление).

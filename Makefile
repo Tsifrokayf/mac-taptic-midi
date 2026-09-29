@@ -88,8 +88,10 @@ typeclick: typeclick.c
 	$(CC) $(CFLAGS) -arch arm64 -o typeclick typeclick.c $(LDFLAGS_ARM) -framework ApplicationServices
 
 # --- Настройки печатки в верхней панели (меню-бар, общий конфиг с typeclick) ---
-TypeBar: TypeBar.swift HapticDriver.swift typebar-main.swift
-	swiftc -O -o TypeBar TypeBar.swift HapticDriver.swift typebar-main.swift $(SWIFT_FW)
+TYPEBAR_SRC = TypeBar.swift TypeBarSettings.swift TypeBarSound.swift HapticDriver.swift typebar-main.swift
+
+TypeBar: $(TYPEBAR_SRC)
+	swiftc -O -o TypeBar $(TYPEBAR_SRC) $(SWIFT_FW)
 
 TYPEBAR_APP = TypeBar.app
 
@@ -98,6 +100,7 @@ typebar-app: TypeBar
 	mkdir -p $(TYPEBAR_APP)/Contents/MacOS $(TYPEBAR_APP)/Contents/Resources
 	cp TypeBar $(TYPEBAR_APP)/Contents/MacOS/
 	cp TypeBar-Info.plist $(TYPEBAR_APP)/Contents/Info.plist
+	cp -R sounds $(TYPEBAR_APP)/Contents/Resources/
 	python3 gen_icon.py
 	iconutil -c icns MidiHapticApp.iconset -o $(TYPEBAR_APP)/Contents/Resources/AppIcon.icns
 	rm -rf MidiHapticApp.iconset

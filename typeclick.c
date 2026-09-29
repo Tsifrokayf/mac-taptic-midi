@@ -151,9 +151,10 @@ static void fire_pat(Pat p, float amp) {
 // Одиночные waveforms на части железа сливаются — поэтому контраст
 // делается повторами: ввод — двойной, esc — buzz. Формат: W или WxR. */
 static Pat p_space = {5, 1}, p_tab = {5, 1}, p_enter = {2, 2},
-           p_del = {1, 1}, p_esc = {3, 1}, p_key = {4, 1};
+           p_del = {1, 1}, p_esc = {3, 1}, p_key = {4, 1},
+           p_arrow = {5, 1}, p_nav = {5, 1};
 // 1 = группа задана флагом командной строки — конфиг её не трогает
-static int cli_locked[6] = {0, 0, 0, 0, 0, 0}; // space,tab,enter,delete,esc,key
+static int cli_locked[8] = {0, 0, 0, 0, 0, 0, 0, 0}; // space,tab,enter,delete,esc,key,arrow,nav
 
 static const char *wave_name(int w) {
     switch (w) {
@@ -176,6 +177,10 @@ static Pat pat_for_key(int code) {
         case 36: return p_enter;
         case 51: return p_del;
         case 53: return p_esc;
+        case 123: case 124: case 125: case 126: // ← ↑ → ↓
+            return p_arrow;
+        case 115: case 116: case 119: case 121: // Home, PgUp, End, PgDn
+            return p_nav;
         case 54: case 55: case 58: case 59:
         case 60: case 61: case 62: case 63:
             return (Pat){0, 0}; // модификаторы молчат
@@ -190,6 +195,7 @@ static time_t g_cfg_mtime = 0;
 static long g_cfg_mtime_ns = 0;
 static int g_cfg_have = 0;
 static int cli_repgap = 0; // пауза задана флагом — конфиг её не трогает
+static int cli_mingap = 0; // мин. пауза задана флагом — конфиг её не трогает
 static double g_master = 100.0; // мастер-сила 10..300 (общая с TypeBar)
 static int cli_master = 0;
 
@@ -270,6 +276,22 @@ static void load_config(void) {
             }
             continue;
         }
+        if (!strcmp(k, "gap")) { // мин. пауза между щелчками, мс
+            if (!cli_mingap) {
+                long n = atol(v);
+                if (n >= 1 && n <= 200) g_min_gap = (double)n / 1000.0;
+                else fprintf(stderr, "warn: config: 'gap' ждёт 1..200\n");
+            }
+            continue;
+        }
+        // Ключи, которые понимает только TypeBar (GUI): CLI их молча
+        // пропускает, чтобы общий ~/.typeclickrc не сыпал предупреждениями.
+        if (!strncmp(k, "combo.", 6)) continue;
+        if (!strcmp(k, "sound") || !strcmp(k, "soundvol") ||
+            !strcmp(k, "soundpick") || !strcmp(k, "soundfile") ||
+            !strcmp(k, "ind") || !strcmp(k, "hold") || !strcmp(k, "holdgap") ||
+            !strcmp(k, "stat") || !strcmp(k, "extkb") ||
+            !strcmp(k, "preset") || !strcmp(k, "profile")) continue;
         Pat *dst = NULL;
         int locked = 0;
         if (!strcmp(k, "space")) { dst = &p_space; locked = cli_locked[0]; }
@@ -278,6 +300,8 @@ static void load_config(void) {
         else if (!strcmp(k, "delete")) { dst = &p_del; locked = cli_locked[3]; }
         else if (!strcmp(k, "esc")) { dst = &p_esc; locked = cli_locked[4]; }
         else if (!strcmp(k, "key")) { dst = &p_key; locked = cli_locked[5]; }
+        else if (!strcmp(k, "arrow")) { dst = &p_arrow; locked = cli_locked[6]; }
+        else if (!strcmp(k, "nav")) { dst = &p_nav; locked = cli_locked[7]; }
         else { fprintf(stderr, "warn: config: неизвестный ключ '%s'\n", k); continue; }
         if (locked) continue; // флаг командной строки важнее файла
         Pat pn = {0, 0};
@@ -322,7 +346,9 @@ static void usage(const char *prog) {
         "                          паттерн W или WxR (waveform 1..6, повторы 1..4)\n"
         "                          (по умолч.: key=4 space=5 tab=5 enter=2x2 delete=1 esc=3)\n"
         "  --config PATH           конфиг вида `space=5x2` (по умолч. ~/.typeclickrc,\n"
-        "                          перечитывается наживую при каждом нажатии)\n"
+        "                          перечитывается наживую при каждом нажатии;\n"
+        "                          там же ключи arrow/nav и gap, а звук/удержание/\n"
+        "                          комбинации понимает только TypeBar — CLI их молчит)\n"
         "  --list                  прощупать waveform 1..6, 15, 16 и выйти\n"
         "  --test-wave N           один удар N и выйти\n"
         "  --probe-key CODE        какой waveform у кода клавиши (49 пробел,\n"
@@ -365,6 +391,7 @@ int main(int argc, char *argv[]) {
         case 1001:
             g_min_gap = atof(optarg) / 1000.0;
             if (g_min_gap < 0 || g_min_gap > 1) { fprintf(stderr, "error: --min-gap 0..1000\n"); return 1; }
+            cli_mingap = 1;
             break;
         case 1002: {
             long v = atol(optarg);

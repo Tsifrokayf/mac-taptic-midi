@@ -173,10 +173,23 @@ make typeclick
 ```
 
 **TypeBar.app** — the same typewriter as a menu-bar icon ⌨️: on/off toggle,
-per-group waveform + repeat count (bursts are unmistakable on any hardware),
-gap presets, wide 10–300 master-strength slider with live preview while
-dragging, vibration preview on effect hover, pattern test,
-**▶ demo** (single/double/triple/buzz/power in sequence with labels).
+per-group waveform + repeat count (includes “Arrows” and “Navigation”
+groups), gap presets, wide 10–300 master-strength slider with live preview,
+**▶ demo**, per-session click counter, icon blink.
+Settings window (⌘ + “Settings…”, 4 tabs):
+- **General** — presets (Quiet/Normal/Loud/Custom) and profiles
+  (save/load/delete a full settings set);
+- **Sound** — key click sound: volume, 4 built-ins (click/typewriter/clip/quiet)
+  or your own wav/aiff up to 5 s, Enter plays a separate carriage-return,
+  “Test” button;
+- **Vibration** — hum while a key is held (repeat gap 1–200 ms), combo
+  reactions (Cmd+C/V/X/Z/A/S/F/Q/W each with its own action), vibration
+  on external keyboards;
+- **Misc** — icon blink, menu counter, session statistics
+  (reset / export JSON / import JSON — whole config as one file).
+Runs on two input sources: an event tap (Input Monitoring permission)
+and HID (knows which keyboard was pressed — external-keyboard filtering
+works only here; built-ins recognized via “Built-In”/pqrs.org).
 Shares `~/.typeclickrc` with the CLI version.
 ```bash
 make typebar-app
@@ -209,7 +222,8 @@ Details in `android/README.md` (in Russian).
 - `main.swift` — GUI entry point
 - `typeclick.c` — typewriter clicks via a global key tap
 - `RhythmGame.swift` (+ `game-main.swift`, `RhythmGame-Info.plist`) — trackpad rhythm game (`make rhythm-app`)
-- `TypeBar.swift` (+ `typebar-main.swift`, `TypeBar-Info.plist`) — typewriter settings in the menu bar (`make typebar-app`)
+- `TypeBar.swift` (+ `TypeBarSettings.swift`, `TypeBarSound.swift`, `typebar-main.swift`, `TypeBar-Info.plist`) — typewriter settings in the menu bar (`make typebar-app`)
+- `sounds/` — TypeBar click sounds (MIT, from lifepillar/typewriter-sounds)
 - `Info.plist`, `gen_icon.py` — `.app` bundle build (`make app`)
 - `Makefile` — `make` (engines), `make MidiHapticApp` (window), `make app` (bundle)
 - `gen_test_midi.py` — dependency-free test MIDI generator

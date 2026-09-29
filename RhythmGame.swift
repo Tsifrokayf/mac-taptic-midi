@@ -203,9 +203,10 @@ final class NoteView: NSView {
         }
 
         // ноты
+        let elapsed = now - g.startTime
         for (i, t) in g.chart.enumerated() {
             if i >= g.judged.count || g.judged[i] { continue }
-            let dt = t - now
+            let dt = t - elapsed
             if dt < -0.3 || dt > 4 { continue }
             let y = g.hitY + CGFloat(dt) * g.speed
             let r: CGFloat = 16
@@ -258,7 +259,8 @@ final class RhythmGame: NSObject, NSApplicationDelegate {
     var pendingOpen: [URL] = []
 
     // окна судейства по сложности (perfect / miss), good = miss
-    var perfectWin = 0.06, missWin = 0.15
+    var perfectWin = 0.08, missWin = 0.18
+    var tapOffset = 0.10 // компенсация задержки детектора тапов (~100 мс)
     let hitY: CGFloat = 420
     let speed: CGFloat = 280 // px в секунду
 
@@ -410,9 +412,9 @@ final class RhythmGame: NSObject, NSApplicationDelegate {
         if playing { return }
         if chart.isEmpty { log("Сначала выбери MIDI"); return }
         switch diffPopup.indexOfSelectedItem {
-        case 0: perfectWin = 0.09; missWin = 0.18
-        case 2: perfectWin = 0.04; missWin = 0.11
-        default: perfectWin = 0.06; missWin = 0.15
+        case 0: perfectWin = 0.12; missWin = 0.22
+        case 2: perfectWin = 0.05; missWin = 0.13
+        default: perfectWin = 0.08; missWin = 0.18
         }
         if driver == nil { driver = HapticDriver() }
         if taps == nil {
@@ -459,9 +461,10 @@ final class RhythmGame: NSObject, NSApplicationDelegate {
     func tick() {
         if !playing { return }
         let now = mono()
+        let elapsed = now - startTime
         // пропущенные
         while idx < chart.count && idx < judged.count &&
-              !judged[idx] && chart[idx] < now - missWin {
+              !judged[idx] && chart[idx] < elapsed - missWin {
             judged[idx] = true
             idx += 1
             miss += 1; combo = 0
@@ -469,25 +472,26 @@ final class RhythmGame: NSObject, NSApplicationDelegate {
         }
         while idx < chart.count && idx < judged.count && judged[idx] { idx += 1 }
         view.needsDisplay = true
-        if now > (chart.last ?? 0.0) + 1.0 {
+        if elapsed > (chart.last ?? 0.0) + 1.0 {
             finishGame()
         }
     }
 
     func onTap(_ t: Double) {
         if !playing || t < startTime { return }
+        let elapsed = t - startTime - tapOffset
         // ближайшая несуженая нота
         var best = -1
         var bestDt = Double.greatestFiniteMagnitude
         let n = min(chart.count, judged.count)
         for i in max(0, idx - 3) ..< min(n, idx + 4) {
             if judged[i] { continue }
-            let dt = abs(chart[i] - t)
+            let dt = abs(chart[i] - elapsed)
             if dt < bestDt { bestDt = dt; best = i }
         }
         guard best >= 0, bestDt <= missWin else { return } // мимо нот — мимо
         judged[best] = true
-        let err = chart[best] - t
+        let err = chart[best] - elapsed + tapOffset
         lastErr = String(format: "%+.0f мс", err * 1000)
         if bestDt <= perfectWin {
             perfect += 1; combo += 1
