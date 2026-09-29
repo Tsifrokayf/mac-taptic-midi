@@ -306,6 +306,17 @@ final class TypeBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self?.settingsOpen(tab: tab)
             }
         }
+        // Отладка гула: --hold-test сам держит клавишу 2 с (без нажатий).
+        if CommandLine.arguments.contains("--hold-test") {
+            holdOn = true
+            dlog("hold-test: гул включён принудительно", always: true)
+            startHold(group: "key")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                guard let self = self else { return }
+                self.stopHold()
+                self.holdOn = false
+            }
+        }
         // Тихий повтор каждые 3 с, пока не включимся: покрывает случай,
         // когда доступ дали уже после запуска (окно активации может не прийти
         // агентному приложению, а модальный алерт вообще стопает ранлуп).
@@ -1037,6 +1048,7 @@ final class TypeBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let w = waves[g] ?? 4
         stopHold()
         let interval = max(0.05, holdGapMs / 1000)
+        dlog("hold arm \(g) w=\(w) gap=\(Int(holdGapMs))ms", always: true)
         holdTimer = Timer.scheduledTimer(withTimeInterval: interval,
                                          repeats: true) { [weak self] _ in
             guard let self = self, self.enabled, self.holdOn else { return }
@@ -1045,6 +1057,7 @@ final class TypeBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func stopHold() {
+        if holdTimer != nil { dlog("hold off", always: true) }
         holdTimer?.invalidate()
         holdTimer = nil
     }
@@ -1205,10 +1218,12 @@ final class TypeBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func refreshSound() {
         if soundOn {
             if click == nil { click = ClickSound() }
+            click?.log = { [weak self] s in self?.dlog(s, always: true) }
             click?.volume = Float(soundVol) / 100
             click?.isOn = true
             let ok = click?.configure(pick: soundPick, custom: soundFile) ?? false
-            if !ok { dlog("sound=fail \(click?.lastError ?? "?")") }
+            dlog("snd cfg ok=\(ok) pick=\(soundPick) vol=\(Int(soundVol))"
+                 + (ok ? "" : " err=\(click?.lastError ?? "?")"), always: true)
         } else {
             click?.isOn = false
             click?.stop()

@@ -28,6 +28,8 @@ final class ClickSound {
     private var next = 0
     private var running = false
     private(set) var lastError = ""
+    /// Куда сплевывать диагностику (dlog приложения).
+    var log: ((String) -> Void)?
     var volume: Float = 0.6
     var isOn = true
 
@@ -97,6 +99,9 @@ final class ClickSound {
         do {
             try engine.start()
             running = true
+            // Узлы стартуют в состоянии stopped: без play() scheduleBuffer
+            // молчит — проверено замером на tap'е (peak=0 без play()).
+            for p in players { p.play() }
         } catch {
             lastError = "аудио не запустилось: \(error.localizedDescription)"
             running = false
@@ -106,12 +111,16 @@ final class ClickSound {
 
     /// Щелчок. group == "enter" — каретка, если встроена.
     func play(group: String = "key") {
-        guard isOn, volume > 0.01, running, let main = mainBuf else { return }
+        guard isOn else { log?("snd skip: выключен"); return }
+        guard volume > 0.01 else { log?("snd skip: громкость 0"); return }
+        guard running else { log?("snd skip: движок не запущен"); return }
+        guard let main = mainBuf else { log?("snd skip: буфер пуст"); return }
         let buf = (group == "enter" && enterBuf != nil) ? enterBuf! : main
         let p = players[next]
         next = (next + 1) % players.count
         p.volume = volume
         p.scheduleBuffer(buf, at: nil, options: .interrupts)
+        p.play() // иначе узел остаётся stopped и не звучит
     }
 
     /// Обрезанный/залипший звук не должен накапливаться на нодах.
